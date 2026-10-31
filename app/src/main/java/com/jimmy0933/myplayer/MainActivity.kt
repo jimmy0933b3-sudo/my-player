@@ -194,6 +194,25 @@ private fun MyPlayerApp() {
         showPreviousNextButtons = value
         playbackPrefs.edit().putBoolean("show_previous_next_buttons", value).apply()
     }
+    // Shared across videos and preserved between app launches. Muting never
+    // overwrites the user's last audible volume.
+    var playbackVolume by remember {
+        mutableStateOf(
+            PlaybackVolumeSettings(
+                level = PlaybackVolumeSettings.normalizeLevel(
+                    playbackPrefs.getFloat("video_volume", PlaybackVolumeSettings.DEFAULT_LEVEL),
+                ),
+                muted = playbackPrefs.getBoolean("video_muted", false),
+            ),
+        )
+    }
+    fun savePlaybackVolume(updated: PlaybackVolumeSettings) {
+        playbackVolume = updated
+        playbackPrefs.edit()
+            .putFloat("video_volume", updated.level)
+            .putBoolean("video_muted", updated.muted)
+            .apply()
+    }
     val galleryPrefs = remember(context) {
         context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
     }
@@ -573,6 +592,9 @@ private fun MyPlayerApp() {
                 controlsAutoHideSeconds = controlsAutoHideSeconds,
                 showPlayButton = showPlayButton,
                 showPreviousNextButtons = showPreviousNextButtons,
+                volumeSettings = playbackVolume,
+                onVolumeChange = { savePlaybackVolume(playbackVolume.withSlider(it)) },
+                onToggleMute = { savePlaybackVolume(playbackVolume.toggleMute()) },
                 hasPreviousVideo = previousVideoIndex != null,
                 hasNextVideo = nextVideoIndex != null,
                 onPreviousVideo = { previousVideoIndex?.let { viewerIndex = it } },
