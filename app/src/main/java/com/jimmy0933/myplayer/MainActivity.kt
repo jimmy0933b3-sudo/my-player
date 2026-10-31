@@ -211,6 +211,7 @@ private fun MyPlayerApp() {
     var deletedCount by remember { mutableIntStateOf(0) }
     var failedCount by remember { mutableIntStateOf(0) }
     var cancelledDeletion by remember { mutableStateOf(false) }
+    var currentChunkLimit by remember { mutableIntStateOf(BatchDeletePolicy.MAX_REQUEST_ITEMS) }
     var approvedLegacyUri by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -293,7 +294,7 @@ private fun MyPlayerApp() {
             }
             refresh++
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val batch = BatchDeletePolicy.nextChunk(deleteQueue, true)
+            val batch = deleteQueue.take(currentChunkLimit)
             try {
                 val request = MediaStore.createDeleteRequest(
                     context.contentResolver, batch.map { it.uri },
@@ -305,7 +306,7 @@ private fun MyPlayerApp() {
             } catch (_: Exception) {
                 // Isolate an invalid URI without losing the other selected items.
                 if (batch.size > 1) {
-                    deleteQueue = batch.take(1) + deleteQueue.drop(batch.size) + batch.drop(1)
+                    currentChunkLimit = 1
                 } else {
                     failedCount++
                     deleteQueue = deleteQueue.drop(1)
@@ -363,6 +364,7 @@ private fun MyPlayerApp() {
         deletedCount = 0
         failedCount = 0
         cancelledDeletion = false
+        currentChunkLimit = BatchDeletePolicy.MAX_REQUEST_ITEMS
         approvedLegacyUri = null
         deleteQueue = unique
         processNext()
