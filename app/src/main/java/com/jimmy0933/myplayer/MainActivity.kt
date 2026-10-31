@@ -110,6 +110,32 @@ private fun MyPlayerApp() {
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
     var permissionAsked by remember { mutableStateOf(false) }
+    val playbackPrefs = remember(context) {
+        context.getSharedPreferences("my_player_playback_settings", android.content.Context.MODE_PRIVATE)
+    }
+    var playbackSettingsOpen by remember { mutableStateOf(false) }
+    var progressBarScale by remember {
+        mutableFloatStateOf(
+            PlaybackProgressStyle.scale(
+                playbackPrefs.getFloat("progress_size", PlaybackProgressStyle.DEFAULT_SCALE),
+            ),
+        )
+    }
+    var progressBarWidth by remember {
+        mutableFloatStateOf(
+            PlaybackProgressStyle.width(
+                playbackPrefs.getFloat("progress_width", PlaybackProgressStyle.DEFAULT_WIDTH),
+            ),
+        )
+    }
+    fun updateProgressScale(newValue: Float) {
+        progressBarScale = PlaybackProgressStyle.scale(newValue)
+        playbackPrefs.edit().putFloat("progress_size", progressBarScale).apply()
+    }
+    fun updateProgressWidth(newValue: Float) {
+        progressBarWidth = PlaybackProgressStyle.width(newValue)
+        playbackPrefs.edit().putFloat("progress_width", progressBarWidth).apply()
+    }
     val galleryPrefs = remember(context) {
         context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
     }
@@ -448,6 +474,8 @@ private fun MyPlayerApp() {
                 position = viewerIndex,
                 total = viewerList.size,
                 loader = loader,
+                progressBarScale = progressBarScale,
+                progressBarWidth = progressBarWidth,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
                 hasPreviousVideo = previousVideoIndex != null,
@@ -492,6 +520,7 @@ private fun MyPlayerApp() {
             },
             canManageMedia = canManageMedia,
             onMediaManagementInfo = { mediaManageInfo = true },
+            onPlaybackSettings = { playbackSettingsOpen = true },
             browserMode = browserMode,
             currentFolderKey = currentFolderKey,
             favoriteFolders = favoriteFolders,
@@ -642,6 +671,70 @@ private fun MyPlayerApp() {
             },
         )
     }
+    if (playbackSettingsOpen) {
+        AlertDialog(
+            onDismissRequest = { playbackSettingsOpen = false },
+            title = { Text("播放進度條設定") },
+            text = {
+                Column {
+                    Text(
+                        "進度條粗細：" + (progressBarScale * 100).toInt() + "%",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = progressBarScale,
+                        onValueChange = ::updateProgressScale,
+                        valueRange = 0.8f..2.5f,
+                    )
+                    Text(
+                        "進度條長度：" + (progressBarWidth * 100).toInt() + "%",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = progressBarWidth,
+                        onValueChange = ::updateProgressWidth,
+                        valueRange = 0.6f..1f,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "預覽（直向、橫向播放皆適用）",
+                        color = Subtle,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                            .background(Panel, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progressBarWidth)
+                                .height(PlaybackProgressStyle.trackDp(progressBarScale).dp)
+                                .background(Color.White.copy(alpha = .3f), CircleShape),
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth(.4f).fillMaxHeight()
+                                    .background(Accent, CircleShape),
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { playbackSettingsOpen = false }) {
+                    Text("完成")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
+                    updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
+                }) { Text("恢復預設") }
+            },
+        )
+    }
     deleteError?.let { message ->
         AlertDialog(
             onDismissRequest = { deleteError = null },
@@ -673,6 +766,7 @@ private fun GalleryScreen(
     onDeleteSelected: () -> Unit,
     canManageMedia: Boolean,
     onMediaManagementInfo: () -> Unit,
+    onPlaybackSettings: () -> Unit,
     browserMode: BrowserMode,
     currentFolderKey: String?,
     favoriteFolders: Set<String>,
@@ -808,8 +902,8 @@ private fun GalleryScreen(
                         )
                     }
                 }
-                IconButton(onClick = onRefresh, modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
+                IconButton(onClick = onPlaybackSettings, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Settings, "播放進度條設定", tint = Subtle)
                 }
             }
 
@@ -881,6 +975,14 @@ private fun GalleryScreen(
 
             if (detailsExpanded) {
                 Spacer(Modifier.height(6.dp))
+                TextButton(onClick = onRefresh) {
+                    Icon(
+                        Icons.Default.Refresh, null, tint = Subtle,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("重新掃描媒體", color = Subtle)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MetricChip(
                         "照片", photoCount.toString(), Icons.Default.Image, Modifier.weight(1f),
