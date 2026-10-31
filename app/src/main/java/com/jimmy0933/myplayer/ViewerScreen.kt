@@ -206,7 +206,20 @@ fun ViewerScreen(
                         onChange(if (vertical < 0) 1 else -1)
                     } else if (!transformed && seekOrigin == null &&
                         abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()) {
-                        showControls = !showControls
+                        if (media.isVideo) {
+                            // Tap directly on the video to pause/resume, including
+                            // while zoomed. Do not confuse it with swipe seeking.
+                            if (player?.isPlaying == true) {
+                                player.pause()
+                                playing = false
+                            } else {
+                                player?.play()
+                                playing = true
+                            }
+                            showControls = true
+                        } else {
+                            showControls = !showControls
+                        }
                     }
                     seekHint = null
                 }
