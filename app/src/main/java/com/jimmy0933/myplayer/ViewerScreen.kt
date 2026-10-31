@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.ZoomOutMap
@@ -68,10 +66,6 @@ fun ViewerScreen(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     onChange: (Int) -> Unit,
-    hasPreviousVideo: Boolean,
-    hasNextVideo: Boolean,
-    onPreviousVideo: () -> Unit,
-    onNextVideo: () -> Unit,
     progressBarScale: Float,
     progressBarWidth: Float,
     controlsAutoHideSeconds: Int,
@@ -540,15 +534,6 @@ fun ViewerScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             IconButton(
-                                enabled = hasPreviousVideo,
-                                onClick = { notifyInteraction(); onPreviousVideo() },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(Icons.Default.SkipPrevious, "上一部影片",
-                                    tint = if (hasPreviousVideo) Color.White else Color.Gray,
-                                    modifier = Modifier.size(24.dp))
-                            }
-                            IconButton(
                                 onClick = {
                                     notifyInteraction()
                                     if (playing) {
@@ -566,15 +551,6 @@ fun ViewerScreen(
                                     if (playing) "暫停" else "播放",
                                     tint = Color.White, modifier = Modifier.size(36.dp),
                                 )
-                            }
-                            IconButton(
-                                enabled = hasNextVideo,
-                                onClick = { notifyInteraction(); onNextVideo() },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(Icons.Default.SkipNext, "下一部影片",
-                                    tint = if (hasNextVideo) Color.White else Color.Gray,
-                                    modifier = Modifier.size(24.dp))
                             }
                             Text(
                                 durationLabel(currentMs),
@@ -619,45 +595,21 @@ fun ViewerScreen(
                             Spacer(Modifier.weight(1f))
                             Text(durationLabel(totalDuration), style = MaterialTheme.typography.labelMedium)
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                enabled = hasPreviousVideo,
-                                onClick = { notifyInteraction(); onPreviousVideo() },
-                            ) {
-                                Icon(
-                                    Icons.Default.SkipPrevious, "上一部影片",
-                                    tint = if (hasPreviousVideo) Color.White else Color.Gray,
-                                    modifier = Modifier.size(30.dp),
-                                )
+                        IconButton(onClick = {
+                            notifyInteraction()
+                            if (playing) {
+                                player?.pause()
+                                playing = false
+                            } else {
+                                player?.play()
+                                playing = true
                             }
-                            Spacer(Modifier.width(28.dp))
-                            IconButton(onClick = {
-                                notifyInteraction()
-                                if (playing) {
-                                    player?.pause()
-                                    playing = false
-                                } else {
-                                    player?.play()
-                                    playing = true
-                                }
-                            }) {
-                                Icon(
-                                    if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
-                                    if (playing) "暫停" else "播放",
-                                    tint = Color.White, modifier = Modifier.size(48.dp),
-                                )
-                            }
-                            Spacer(Modifier.width(28.dp))
-                            IconButton(
-                                enabled = hasNextVideo,
-                                onClick = { notifyInteraction(); onNextVideo() },
-                            ) {
-                                Icon(
-                                    Icons.Default.SkipNext, "下一部影片",
-                                    tint = if (hasNextVideo) Color.White else Color.Gray,
-                                    modifier = Modifier.size(30.dp),
-                                )
-                            }
+                        }) {
+                            Icon(
+                                if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                                if (playing) "暫停" else "播放",
+                                tint = Color.White, modifier = Modifier.size(48.dp),
+                            )
                         }
                     }
                 } else if (!isLandscape) {

@@ -540,9 +540,6 @@ private fun MyPlayerApp() {
         BackHandler { closeViewer() }
         val viewerList = viewerItems.orEmpty()
         if (viewerIndex in viewerList.indices) {
-            val videoFlags = viewerList.map { it.isVideo }
-            val previousVideoIndex = adjacentVideoIndex(videoFlags, viewerIndex, -1)
-            val nextVideoIndex = adjacentVideoIndex(videoFlags, viewerIndex, 1)
             ViewerScreen(
                 media = viewerList[viewerIndex],
                 position = viewerIndex,
@@ -555,10 +552,6 @@ private fun MyPlayerApp() {
                 decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
-                hasPreviousVideo = previousVideoIndex != null,
-                hasNextVideo = nextVideoIndex != null,
-                onPreviousVideo = { previousVideoIndex?.let { viewerIndex = it } },
-                onNextVideo = { nextVideoIndex?.let { viewerIndex = it } },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
                 },
