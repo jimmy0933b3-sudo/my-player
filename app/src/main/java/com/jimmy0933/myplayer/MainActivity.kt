@@ -865,7 +865,7 @@ private fun MyPlayerApp() {
                         )
                     }
                     Text(
-                        "關閉播放鍵後，仍可點影片中央播放／暫停；關閉上一部／下一部按鈕後，仍可上下滑動切換。",
+                        "點影片中央播放／暫停；點中央以外的空白處可顯示或隱藏標題、說明、進度條與音量控制。上下滑動仍可切換影片。",
                         color = Subtle,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -944,7 +944,7 @@ private fun MyPlayerApp() {
                         )
                     }
                     Text(
-                        "影片播放時，沒有操作達指定秒數後，隱藏標題、進度條及右側音量控制；暫停時仍顯示。",
+                        "影片播放時，沒有操作達指定秒數後，自動隱藏標題、進度條與右側音量控制。暫停時不會自動隱藏，也能手動點畫面切換。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Subtle,
                     )
