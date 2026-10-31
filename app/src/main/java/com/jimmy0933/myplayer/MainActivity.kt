@@ -178,10 +178,17 @@ private fun MyPlayerApp() {
         controlsAutoHideSeconds = PlaybackControlsTimeout.normalize(newValue)
         playbackPrefs.edit().putInt("controls_auto_hide_seconds", controlsAutoHideSeconds).apply()
     }
-    // Keep the previous release's clean layout: next/previous buttons are
-    // opt-in, while the play/pause button remains enabled by default.
+    // Migrate the previous default-visible play/pause setting once. Existing
+    // installations need to hide the button too, not just fresh installs.
+    // After migration, explicitly enabling it in Settings remains persistent.
     var showPlayButton by remember {
-        mutableStateOf(playbackPrefs.getBoolean("show_play_button", true))
+        if (!playbackPrefs.getBoolean("play_button_hidden_default_migrated", false)) {
+            playbackPrefs.edit()
+                .putBoolean("show_play_button", false)
+                .putBoolean("play_button_hidden_default_migrated", true)
+                .apply()
+        }
+        mutableStateOf(playbackPrefs.getBoolean("show_play_button", false))
     }
     var showPreviousNextButtons by remember {
         mutableStateOf(playbackPrefs.getBoolean("show_previous_next_buttons", false))
@@ -937,7 +944,7 @@ private fun MyPlayerApp() {
                         )
                     }
                     Text(
-                        "影片播放時，沒有操作達指定秒數後，同時隱藏上方標題及下方進度條、播放按鈕。暫停時仍顯示。",
+                        "影片播放時，沒有操作達指定秒數後，隱藏標題、進度條及右側音量控制；暫停時仍顯示。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Subtle,
                     )
@@ -946,7 +953,7 @@ private fun MyPlayerApp() {
                         updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
                         updateControlsAutoHideSeconds(PlaybackControlsTimeout.DEFAULT_SECONDS)
                         updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
-                        updatePlayButtonVisibility(true)
+                        updatePlayButtonVisibility(false)
                         updatePreviousNextVisibility(false)
                     }) {
                         Text("恢復預設")
