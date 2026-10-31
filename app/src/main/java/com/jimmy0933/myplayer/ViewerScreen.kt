@@ -8,10 +8,13 @@ package com.jimmy0933.myplayer
 import android.content.res.Configuration
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,7 +36,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -467,6 +475,18 @@ fun ViewerScreen(
             )
         }
 
+        if (showControls && media.isVideo) {
+            PlaybackVolumeControl(
+                settings = volumeSettings,
+                onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
+                onToggleMute = { notifyInteraction(); onToggleMute() },
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .displayCutoutPadding()
+                    .navigationBarsPadding()
+                    .padding(end = if (isLandscape) 10.dp else 8.dp),
+                sliderHeight = if (isLandscape) 124.dp else 184.dp,
+            )
+        }
         if (showControls) {
             Row(
                 Modifier.fillMaxWidth().align(Alignment.TopCenter)
@@ -623,13 +643,6 @@ fun ViewerScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White,
                             )
-                            PlaybackVolumeControl(
-                                settings = volumeSettings,
-                                onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
-                                onToggleMute = { notifyInteraction(); onToggleMute() },
-                                modifier = Modifier.width(144.dp),
-                                compact = true,
-                            )
                         }
                     } else {
                         VideoProgressSlider(
@@ -649,12 +662,6 @@ fun ViewerScreen(
                             Spacer(Modifier.weight(1f))
                             Text(durationLabel(totalDuration), style = MaterialTheme.typography.labelMedium)
                         }
-                        PlaybackVolumeControl(
-                            settings = volumeSettings,
-                            onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
-                            onToggleMute = { notifyInteraction(); onToggleMute() },
-                            modifier = Modifier.fillMaxWidth(0.78f),
-                        )
                         if (showPlayButton || showPreviousNextButtons) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -715,8 +722,8 @@ fun ViewerScreen(
 }
 
 /**
- * Small always-available volume slider and one-tap mute. Landscape keeps it
- * in the seek row to avoid adding another toolbar over the full-screen video.
+ * Volume goes vertically along the right edge, entirely separate from the
+ * horizontal playback seekbar. This control participates in overlay auto-hide.
  */
 @Composable
 private fun PlaybackVolumeControl(
@@ -724,48 +731,116 @@ private fun PlaybackVolumeControl(
     onVolumeChange: (Float) -> Unit,
     onToggleMute: () -> Unit,
     modifier: Modifier = Modifier,
-    compact: Boolean = false,
+    sliderHeight: androidx.compose.ui.unit.Dp = 184.dp,
 ) {
-    val muted = settings.effectiveVolume <= 0f
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    val volume = settings.effectiveVolume
+    val muted = volume <= 0f
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = .60f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+        Text(
+            "${(volume * 100).toInt()}%",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+        )
+        VerticalVolumeSlider(
+            value = volume,
+            onValueChange = onVolumeChange,
+            modifier = Modifier.width(44.dp).height(sliderHeight),
+        )
         IconButton(
             onClick = onToggleMute,
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
         ) {
             Icon(
                 imageVector = when {
                     muted -> Icons.Default.VolumeOff
-                    settings.effectiveVolume < 0.5f -> Icons.Default.VolumeDown
+                    volume < 0.5f -> Icons.Default.VolumeDown
                     else -> Icons.Default.VolumeUp
                 },
                 contentDescription = if (muted) "取消靜音" else "立即靜音",
                 tint = if (muted) Color(0xFF92A9FF) else Color.White,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
-        Slider(
-            value = settings.effectiveVolume,
-            onValueChange = onVolumeChange,
-            valueRange = 0f..1f,
-            modifier = Modifier.weight(1f).height(36.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = Color(0xFF92A9FF),
-                activeTrackColor = Color(0xFF92A9FF),
-                inactiveTrackColor = Color.White.copy(alpha = .3f),
-            ),
+    }
+}
+
+/** Supports both tap-to-set and vertical dragging; up=louder, down=quieter. */
+@Composable
+private fun VerticalVolumeSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnChange by rememberUpdatedState(onValueChange)
+    Canvas(
+        modifier = modifier
+            .semantics {
+                contentDescription = "影片音量"
+                progressBarRangeInfo = ProgressBarRangeInfo(value.coerceIn(0f, 1f), 0f..1f)
+                setProgress { target ->
+                    currentOnChange(target.coerceIn(0f, 1f))
+                    true
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    currentOnChange(
+                        VerticalVolumeGeometry.fractionAt(
+                            offset.y, size.height.toFloat(), 12.dp.toPx(),
+                        ),
+                    )
+                }
+            }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        currentOnChange(
+                            VerticalVolumeGeometry.fractionAt(
+                                offset.y, size.height.toFloat(), 12.dp.toPx(),
+                            ),
+                        )
+                    },
+                    onVerticalDrag = { change, _ ->
+                        currentOnChange(
+                            VerticalVolumeGeometry.fractionAt(
+                                change.position.y, size.height.toFloat(), 12.dp.toPx(),
+                            ),
+                        )
+                        change.consume()
+                    },
+                )
+            },
+    ) {
+        val inset = 12.dp.toPx()
+        val x = size.width / 2f
+        val top = inset
+        val bottom = (size.height - inset).coerceAtLeast(top)
+        val thumbY = VerticalVolumeGeometry.yAt(value, size.height, inset)
+        drawLine(
+            color = Color.White.copy(alpha = 0.28f),
+            start = Offset(x, top),
+            end = Offset(x, bottom),
+            strokeWidth = 5.dp.toPx(),
+            cap = StrokeCap.Round,
         )
-        if (!compact) {
-            Text(
-                "${(settings.effectiveVolume * 100).toInt()}%",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.width(36.dp),
-            )
-        }
+        drawLine(
+            color = Color(0xFF92A9FF),
+            start = Offset(x, thumbY),
+            end = Offset(x, bottom),
+            strokeWidth = 5.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+        drawCircle(
+            color = Color.White,
+            radius = 8.dp.toPx(),
+            center = Offset(x, thumbY),
+        )
     }
 }
 
