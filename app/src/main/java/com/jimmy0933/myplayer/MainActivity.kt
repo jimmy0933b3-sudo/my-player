@@ -178,6 +178,22 @@ private fun MyPlayerApp() {
         controlsAutoHideSeconds = PlaybackControlsTimeout.normalize(newValue)
         playbackPrefs.edit().putInt("controls_auto_hide_seconds", controlsAutoHideSeconds).apply()
     }
+    // Keep the previous release's clean layout: next/previous buttons are
+    // opt-in, while the play/pause button remains enabled by default.
+    var showPlayButton by remember {
+        mutableStateOf(playbackPrefs.getBoolean("show_play_button", true))
+    }
+    var showPreviousNextButtons by remember {
+        mutableStateOf(playbackPrefs.getBoolean("show_previous_next_buttons", false))
+    }
+    fun updatePlayButtonVisibility(value: Boolean) {
+        showPlayButton = value
+        playbackPrefs.edit().putBoolean("show_play_button", value).apply()
+    }
+    fun updatePreviousNextVisibility(value: Boolean) {
+        showPreviousNextButtons = value
+        playbackPrefs.edit().putBoolean("show_previous_next_buttons", value).apply()
+    }
     val galleryPrefs = remember(context) {
         context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
     }
@@ -540,6 +556,13 @@ private fun MyPlayerApp() {
         BackHandler { closeViewer() }
         val viewerList = viewerItems.orEmpty()
         if (viewerIndex in viewerList.indices) {
+            val videoFlags = viewerList.map { it.isVideo }
+            val previousVideoIndex = if (showPreviousNextButtons) {
+                adjacentVideoIndex(videoFlags, viewerIndex, -1)
+            } else null
+            val nextVideoIndex = if (showPreviousNextButtons) {
+                adjacentVideoIndex(videoFlags, viewerIndex, 1)
+            } else null
             ViewerScreen(
                 media = viewerList[viewerIndex],
                 position = viewerIndex,
@@ -548,6 +571,12 @@ private fun MyPlayerApp() {
                 progressBarScale = progressBarScale,
                 progressBarWidth = progressBarWidth,
                 controlsAutoHideSeconds = controlsAutoHideSeconds,
+                showPlayButton = showPlayButton,
+                showPreviousNextButtons = showPreviousNextButtons,
+                hasPreviousVideo = previousVideoIndex != null,
+                hasNextVideo = nextVideoIndex != null,
+                onPreviousVideo = { previousVideoIndex?.let { viewerIndex = it } },
+                onNextVideo = { nextVideoIndex?.let { viewerIndex = it } },
                 landscapeDisplayMode = landscapeDisplayMode,
                 decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
@@ -774,6 +803,46 @@ private fun MyPlayerApp() {
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
                     Text(
+                        "影片播放按鈕",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "顯示播放／暫停鍵",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Switch(
+                            checked = showPlayButton,
+                            onCheckedChange = ::updatePlayButtonVisibility,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "顯示上一部／下一部按鈕",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Switch(
+                            checked = showPreviousNextButtons,
+                            onCheckedChange = ::updatePreviousNextVisibility,
+                        )
+                    }
+                    Text(
+                        "關閉播放鍵後，仍可點影片中央播放／暫停；關閉上一部／下一部按鈕後，仍可上下滑動切換。",
+                        color = Subtle,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
                         "橫向影片顯示",
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
@@ -855,6 +924,8 @@ private fun MyPlayerApp() {
                         updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
                         updateControlsAutoHideSeconds(PlaybackControlsTimeout.DEFAULT_SECONDS)
                         updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
+                        updatePlayButtonVisibility(true)
+                        updatePreviousNextVisibility(false)
                     }) {
                         Text("恢復預設")
                     }
