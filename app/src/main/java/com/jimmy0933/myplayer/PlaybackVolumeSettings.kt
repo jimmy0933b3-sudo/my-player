@@ -4,7 +4,7 @@ package com.jimmy0933.myplayer
  * The player's own volume (0..1), independent of Android's media stream volume.
  * Keep the last audible level while muted so one tap can restore it.
  */
-internal data class PlaybackVolumeSettings(
+data class PlaybackVolumeSettings(
     val level: Float = DEFAULT_LEVEL,
     val muted: Boolean = false,
 ) {
