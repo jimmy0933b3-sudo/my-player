@@ -116,6 +116,14 @@ private fun MyPlayerApp() {
         context.getSharedPreferences("my_player_playback_settings", android.content.Context.MODE_PRIVATE)
     }
     var playbackSettingsOpen by remember { mutableStateOf(false) }
+    var decoderSettingsOpen by remember { mutableStateOf(false) }
+    var decoderPreferences by remember(context) {
+        mutableStateOf(DecoderSettings.load(context))
+    }
+    fun saveDecoderSettings(updated: DecoderPreferences) {
+        decoderPreferences = updated
+        DecoderSettings.save(context, updated)
+    }
     var progressBarScale by remember {
         mutableFloatStateOf(
             PlaybackProgressStyle.scale(
@@ -486,6 +494,7 @@ private fun MyPlayerApp() {
                 loader = loader,
                 progressBarScale = progressBarScale,
                 progressBarWidth = progressBarWidth,
+                decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
                 hasPreviousVideo = previousVideoIndex != null,
@@ -707,6 +716,12 @@ private fun MyPlayerApp() {
                         onValueChange = ::updateProgressWidth,
                         valueRange = 0.6f..1f,
                     )
+                    TextButton(onClick = {
+                        updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
+                        updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
+                    }) {
+                        Text("恢復預設")
+                    }
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "預覽（直向、橫向播放皆適用）",
@@ -733,16 +748,25 @@ private fun MyPlayerApp() {
                 }
             },
             confirmButton = {
+                TextButton(onClick = {
+                    playbackSettingsOpen = false
+                    decoderSettingsOpen = true
+                }) {
+                    Text("解碼器設定")
+                }
+            },
+            dismissButton = {
                 TextButton(onClick = { playbackSettingsOpen = false }) {
                     Text("完成")
                 }
             },
-            dismissButton = {
-                TextButton(onClick = {
-                    updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
-                    updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
-                }) { Text("恢復預設") }
-            },
+        )
+    }
+    if (decoderSettingsOpen) {
+        DecoderSettingsDialog(
+            settings = decoderPreferences,
+            onChange = ::saveDecoderSettings,
+            onDismiss = { decoderSettingsOpen = false },
         )
     }
     deleteError?.let { message ->

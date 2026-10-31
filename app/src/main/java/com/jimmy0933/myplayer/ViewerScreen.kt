@@ -40,7 +40,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -66,19 +69,71 @@ fun ViewerScreen(
     onNextVideo: () -> Unit,
     progressBarScale: Float,
     progressBarWidth: Float,
+    decoderPreferences: DecoderPreferences,
 ) {
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val player = remember(media.uri) {
-        if (media.isVideo) ExoPlayer.Builder(context).build() else null
+    // Recover from an actual decoding error once, using installed software
+    // decoders first. Preserve the playhead; never repeatedly restart a file.
+    var softwareRetryAttempted by remember(media.uri) { mutableStateOf(false) }
+    var restartAtMs by remember(media.uri) { mutableLongStateOf(0L) }
+    var videoDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
+    var audioDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
+    var decoderStatus by remember(media.uri) { mutableStateOf<String?>(null) }
+    val effectiveDecoder = if (softwareRetryAttempted) {
+        decoderPreferences.copy(video = VideoDecoderPreference.SOFTWARE_FIRST)
+    } else decoderPreferences
+    val player = remember(media.uri, effectiveDecoder) {
+        if (media.isVideo) ExoPlayer.Builder(
+            context, DecoderSettings.renderers(context, effectiveDecoder),
+        ).build() else null
     }
     DisposableEffect(player, media.uri) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                if (decoderPreferences.recoverOnPlaybackError &&
+                    !softwareRetryAttempted &&
+                    error.errorCode in 4001..4006) {
+                    restartAtMs = (player?.currentPosition ?: 0L).coerceAtLeast(0L)
+                    decoderStatus = "硬體／系統解碼失敗，正在改用軟體解碼優先重試"
+                    softwareRetryAttempted = true
+                } else {
+                    decoderStatus = "無法播放：解碼器或格式不支援（${error.errorCodeName}）"
+                }
+            }
+        }
+        val analytics = object : AnalyticsListener {
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                videoDecoderName = decoderName
+                if (softwareRetryAttempted) decoderStatus = "已重新選用解碼器：$decoderName"
+            }
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                audioDecoderName = decoderName
+            }
+        }
         player?.apply {
+            addListener(listener)
+            addAnalyticsListener(analytics)
             setMediaItem(MediaItem.fromUri(media.uri))
             prepare()
+            if (restartAtMs > 0L) seekTo(restartAtMs)
             playWhenReady = true
         }
-        onDispose { player?.release() }
+        onDispose {
+            player?.removeListener(listener)
+            player?.removeAnalyticsListener(analytics)
+            player?.release()
+        }
     }
 
     val lifecycle = (context as ComponentActivity).lifecycle
@@ -311,6 +366,18 @@ fun ViewerScreen(
             },
         )
 
+        if (decoderStatus != null) {
+            Text(
+                decoderStatus.orEmpty(),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 56.dp)
+                    .background(Color.Black.copy(alpha = .8f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
         if (seekHint != null) {
             Text(
                 seekHint.orEmpty(),
