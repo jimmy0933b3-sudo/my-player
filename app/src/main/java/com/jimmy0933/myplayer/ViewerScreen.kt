@@ -45,8 +45,10 @@ import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 @Composable
@@ -92,6 +94,13 @@ fun ViewerScreen(
     var playing by remember(media.uri) { mutableStateOf(media.isVideo) }
     var currentMs by remember(media.uri) { mutableLongStateOf(0L) }
     var seekHint by remember(media.uri) { mutableStateOf<String?>(null) }
+    val tapScope = rememberCoroutineScope()
+    var previousZoomTapMillis by remember(media.uri) { mutableLongStateOf(-1L) }
+    var previousZoomTapPosition by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var pendingZoomSingleTap by remember(media.uri) { mutableStateOf<Job?>(null) }
+    DisposableEffect(media.uri) {
+        onDispose { pendingZoomSingleTap?.cancel() }
+    }
     // Any touch or control action renews the idle timer and reveals the overlays.
     var lastInteraction by remember(media.uri) { mutableIntStateOf(0) }
     fun notifyInteraction() {
@@ -154,7 +163,7 @@ fun ViewerScreen(
             Modifier.fillMaxSize().pointerInput(media.uri, player) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    notifyInteraction()
+                    if (media.isVideo) notifyInteraction()
                     var vertical = 0f
                     var horizontal = 0f
                     var transformed = false
@@ -225,34 +234,75 @@ fun ViewerScreen(
                         }
                     } while (event.changes.any { it.pressed })
 
+                    val isTap = !transformed && seekOrigin == null &&
+                        abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()
                     if (!transformed && zoom <= 1.01f && seekOrigin == null &&
                         abs(vertical) > 85.dp.toPx() && abs(vertical) > abs(horizontal) * 1.2f) {
+                        pendingZoomSingleTap?.cancel()
+                        pendingZoomSingleTap = null
+                        previousZoomTapMillis = -1L
                         onChange(if (vertical < 0) 1 else -1)
-                    } else if (!transformed && seekOrigin == null &&
-                        abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()) {
-                        if (media.isVideo) {
-                            // Only the center of the video toggles playback.
-                            // Keep the bottom progress/seek area and its surroundings
-                            // free of accidental play/pause taps in both orientations.
-                            if (isCenterVideoTap(
-                                    down.position.x,
-                                    down.position.y,
-                                    size.width.toFloat(),
-                                    size.height.toFloat(),
-                                )) {
-                                if (player?.isPlaying == true) {
-                                    player.pause()
-                                    playing = false
-                                } else {
-                                    player?.play()
-                                    playing = true
+                    } else if (isTap) {
+                        // Double-tap while zoomed restores BOTH scale and panning.
+                        // Hold a zoomed single tap briefly so the first tap does not
+                        // accidentally toggle video playback during a double tap.
+                        val insidePlayZone = isCenterVideoTap(
+                            down.position.x, down.position.y,
+                            size.width.toFloat(), size.height.toFloat(),
+                        )
+                        fun performSingleTap() {
+                            if (media.isVideo) {
+                                if (insidePlayZone) {
+                                    if (player?.isPlaying == true) {
+                                        player.pause()
+                                        playing = false
+                                    } else {
+                                        player?.play()
+                                        playing = true
+                                    }
                                 }
+                                // Outside center only reveals controls; never toggles video.
+                            } else {
+                                showControls = !showControls
                             }
-                            // Non-center taps only reveal the overlays. In particular,
-                            // taps near the progress bar must never pause playback.
-                        } else {
-                            showControls = !showControls
                         }
+                        if (shouldResetZoomOnDoubleTap(
+                                zoom = zoom,
+                                previousTapMillis = previousZoomTapMillis,
+                                currentTapMillis = down.uptimeMillis,
+                                previousX = previousZoomTapPosition.x,
+                                previousY = previousZoomTapPosition.y,
+                                currentX = down.position.x,
+                                currentY = down.position.y,
+                                maxDistancePx = 48.dp.toPx(),
+                            )) {
+                            pendingZoomSingleTap?.cancel()
+                            pendingZoomSingleTap = null
+                            previousZoomTapMillis = -1L
+                            zoom = 1f
+                            translation = Offset.Zero
+                            showControls = true
+                        } else if (zoom > 1.01f) {
+                            pendingZoomSingleTap?.cancel()
+                            previousZoomTapMillis = down.uptimeMillis
+                            previousZoomTapPosition = down.position
+                            pendingZoomSingleTap = tapScope.launch {
+                                delay(310L)
+                                performSingleTap()
+                                previousZoomTapMillis = -1L
+                                pendingZoomSingleTap = null
+                            }
+                        } else {
+                            pendingZoomSingleTap?.cancel()
+                            pendingZoomSingleTap = null
+                            previousZoomTapMillis = -1L
+                            performSingleTap()
+                        }
+                    } else {
+                        // A pinch, pan or seek is not part of the double-tap gesture.
+                        pendingZoomSingleTap?.cancel()
+                        pendingZoomSingleTap = null
+                        previousZoomTapMillis = -1L
                     }
                     seekHint = null
                 }
