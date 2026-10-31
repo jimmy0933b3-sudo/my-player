@@ -3,7 +3,7 @@ package com.jimmy0933.myplayer
 import kotlin.math.max
 
 /** Landscape modes. Portrait playback keeps its original fit behavior. */
-internal enum class LandscapeVideoDisplay {
+enum class LandscapeVideoDisplay {
     SMART, FIT, FILL;
 
     companion object {
