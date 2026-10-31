@@ -133,7 +133,7 @@ fun ViewerScreen(
         Box(
             Modifier.fillMaxSize().pointerInput(media.uri, player) {
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false)
                     var vertical = 0f
                     var horizontal = 0f
                     var transformed = false
@@ -210,16 +210,24 @@ fun ViewerScreen(
                     } else if (!transformed && seekOrigin == null &&
                         abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()) {
                         if (media.isVideo) {
-                            // Tap directly on the video to pause/resume, including
-                            // while zoomed. Do not confuse it with swipe seeking.
-                            if (player?.isPlaying == true) {
-                                player.pause()
-                                playing = false
-                            } else {
-                                player?.play()
-                                playing = true
+                            // Only the center of the video toggles playback.
+                            // Keep the bottom progress/seek area and its surroundings
+                            // free of accidental play/pause taps in both orientations.
+                            if (isCenterVideoTap(
+                                    down.position.x,
+                                    down.position.y,
+                                    size.width.toFloat(),
+                                    size.height.toFloat(),
+                                )) {
+                                if (player?.isPlaying == true) {
+                                    player.pause()
+                                    playing = false
+                                } else {
+                                    player?.play()
+                                    playing = true
+                                }
+                                showControls = true
                             }
-                            showControls = true
                         } else {
                             showControls = !showControls
                         }
@@ -435,6 +443,18 @@ private fun VideoProgressSlider(
         },
     )
 }
+
+// Use a deliberately compact central region for single-tap play/pause.
+// Bottom 36% is always excluded, even if controls are hidden, so tapping near
+// the seekbar never accidentally toggles playback. Swipes/pinch remain full-screen.
+internal fun isCenterVideoTap(
+    x: Float,
+    y: Float,
+    width: Float,
+    height: Float,
+): Boolean = width > 0f && height > 0f &&
+    x >= width * 0.25f && x <= width * 0.75f &&
+    y >= height * 0.28f && y <= height * 0.64f
 
 // Keep gesture priority deterministic regardless of zoom. Pure for regression testing.
 internal fun shouldSeekVideoSwipe(
