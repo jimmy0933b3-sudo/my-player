@@ -401,8 +401,9 @@ fun ViewerScreen(
             Row(
                 Modifier.fillMaxWidth().align(Alignment.TopCenter)
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .8f), Color.Transparent)))
-                    // Media stays fullscreen, while viewer action icons remain
-                    // tappable below the Android status bar (including landscape).
+                    // Content fills the screen. Viewer actions still avoid
+                    // camera/display cutouts, even when status bars are hidden.
+                    .displayCutoutPadding()
                     .statusBarsPadding()
                     .padding(start = 8.dp, end = 16.dp,
                         top = if (isLandscape) 2.dp else 12.dp,
