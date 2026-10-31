@@ -25,6 +25,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -268,6 +271,29 @@ private fun MyPlayerApp() {
     SideEffect {
         if (activity.requestedOrientation != requestedScreenOrientation) {
             activity.requestedOrientation = requestedScreenOrientation
+        }
+    }
+
+    // A full-screen Compose Box alone is not immersive: Android's clock,
+    // status icons and navigation gesture bar remain visible unless their
+    // window insets are explicitly hidden. Keep this scoped to the viewer,
+    // including pause, rotation and switches between neighboring media.
+    // On returning to the gallery we always restore normal system bars.
+    val isViewerOpen = viewerItems != null
+    DisposableEffect(activity, isViewerOpen) {
+        val insetsController = WindowCompat.getInsetsController(
+            activity.window, activity.window.decorView,
+        )
+        val systemBars = WindowInsetsCompat.Type.systemBars()
+        if (isViewerOpen) {
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(systemBars)
+        } else {
+            insetsController.show(systemBars)
+        }
+        onDispose {
+            if (isViewerOpen) insetsController.show(systemBars)
         }
     }
 
