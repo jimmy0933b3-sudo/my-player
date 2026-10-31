@@ -170,7 +170,7 @@ object MediaLibrary {
     }
 
     private fun legacyLocation(path: String?): Pair<String, String> {
-        val parent = path?.replace('\\\\', '/')?.substringBeforeLast('/', "")
+        val parent = path?.replace('\\', '/')?.substringBeforeLast('/', "")
             .orEmpty()
         if (parent.startsWith("/storage/emulated/")) {
             val relative = parent.removePrefix("/storage/emulated/")
