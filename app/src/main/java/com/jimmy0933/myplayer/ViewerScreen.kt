@@ -64,6 +64,8 @@ fun ViewerScreen(
     hasNextVideo: Boolean,
     onPreviousVideo: () -> Unit,
     onNextVideo: () -> Unit,
+    progressBarScale: Float,
+    progressBarWidth: Float,
 ) {
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -436,7 +438,11 @@ fun ViewerScreen(
                             VideoProgressSlider(
                                 value = sliderPosition,
                                 onValueChange = seekToFraction,
-                                modifier = Modifier.weight(1f).height(30.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
+                                    .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
+                                scale = progressBarScale,
                             )
                             Text(
                                 durationLabel(totalDuration),
@@ -448,7 +454,10 @@ fun ViewerScreen(
                         VideoProgressSlider(
                             value = sliderPosition,
                             onValueChange = seekToFraction,
-                            modifier = Modifier.fillMaxWidth(0.96f).height(30.dp),
+                            modifier = Modifier
+                                .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
+                                .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
+                            scale = progressBarScale,
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -516,6 +525,7 @@ private fun VideoProgressSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    scale: Float = PlaybackProgressStyle.DEFAULT_SCALE,
 ) {
     // Same thin, directly seekable track in both screen orientations.
     Slider(
@@ -529,13 +539,13 @@ private fun VideoProgressSlider(
         ),
         thumb = {
             Box(
-                Modifier.size(10.dp)
+                Modifier.size(PlaybackProgressStyle.thumbDp(scale).dp)
                     .background(Color(0xFF92A9FF), CircleShape),
             )
         },
         track = { state ->
             Box(
-                Modifier.fillMaxWidth().height(3.dp)
+                Modifier.fillMaxWidth().height(PlaybackProgressStyle.trackDp(scale).dp)
                     .background(Color.White.copy(alpha = .25f), CircleShape),
             ) {
                 Box(
