@@ -32,19 +32,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -71,6 +75,7 @@ fun ViewerScreen(
     progressBarScale: Float,
     progressBarWidth: Float,
     controlsAutoHideSeconds: Int,
+    landscapeDisplayMode: LandscapeVideoDisplay,
     decoderPreferences: DecoderPreferences,
 ) {
     val context = LocalContext.current
@@ -80,6 +85,7 @@ fun ViewerScreen(
     var softwareRetryAttempted by remember(media.uri) { mutableStateOf(false) }
     var restartAtMs by remember(media.uri) { mutableLongStateOf(0L) }
     var videoDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
+    var currentVideoSize by remember(media.uri) { mutableStateOf<VideoSize?>(null) }
     var audioDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
     var decoderStatus by remember(media.uri) { mutableStateOf<String?>(null) }
     // A successful fallback shouldn't leave a permanent banner over the video.
@@ -104,6 +110,10 @@ fun ViewerScreen(
     }
     DisposableEffect(player, media.uri) {
         val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                currentVideoSize = videoSize
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 if (decoderPreferences.recoverOnPlaybackError &&
                     !softwareRetryAttempted &&
@@ -204,13 +214,39 @@ fun ViewerScreen(
         (currentMs.toFloat() / totalDuration).coerceIn(0f, 1f)
     } else 0f
 
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+    var playbackViewport by remember { mutableStateOf(IntSize.Zero) }
+    val landscapeAutoScale =
+        if (isLandscape && media.isVideo && landscapeDisplayMode == LandscapeVideoDisplay.SMART) {
+            landscapeSmartScale(
+                playbackViewport.width,
+                playbackViewport.height,
+                currentVideoSize?.width ?: 0,
+                currentVideoSize?.height ?: 0,
+                currentVideoSize?.pixelWidthHeightRatio ?: 1f,
+                currentVideoSize?.unappliedRotationDegrees ?: 0,
+            )
+        } else 1f
+    val videoResizeMode =
+        if (isLandscape && landscapeDisplayMode == LandscapeVideoDisplay.FILL) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        } else {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+
+    Box(
+        Modifier.fillMaxSize().background(Color.Black)
+            .onSizeChanged { playbackViewport = it },
+        contentAlignment = Alignment.Center,
+    ) {
         if (media.isVideo) {
             AndroidVideo(
                 player = player,
+                resizeMode = videoResizeMode,
                 modifier = Modifier.fillMaxSize().graphicsLayer {
-                    scaleX = zoom
-                    scaleY = zoom
+                    // SMART reduces black bars without the substantial cropping
+                    // of full ZOOM. Pinch-to-zoom remains independently available.
+                    scaleX = zoom * landscapeAutoScale
+                    scaleY = zoom * landscapeAutoScale
                     translationX = translation.x
                     translationY = translation.y
                 },
@@ -703,13 +739,20 @@ private fun boundPan(raw: Offset, zoom: Float, width: Int, height: Int): Offset 
 }
 
 @Composable
-private fun AndroidVideo(player: ExoPlayer?, modifier: Modifier = Modifier) {
+private fun AndroidVideo(
+    player: ExoPlayer?,
+    resizeMode: Int,
+    modifier: Modifier = Modifier,
+) {
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { context ->
             LayoutInflater.from(context).inflate(R.layout.view_player, null, false) as PlayerView
         },
         modifier = modifier,
-        update = { view -> view.player = player },
+        update = { view ->
+            view.resizeMode = resizeMode
+            if (view.player !== player) view.player = player
+        },
         onRelease = { view -> view.player = null },
     )
 }
