@@ -295,7 +295,8 @@ fun ViewerScreen(
             Modifier.fillMaxSize().pointerInput(media.uri, player) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    if (media.isVideo) notifyInteraction()
+                    // Do not reveal overlays on pointer-down: a tap outside the
+                    // center must be able to both hide and show them reliably.
                     var vertical = 0f
                     var horizontal = 0f
                     var transformed = false
@@ -380,6 +381,9 @@ fun ViewerScreen(
 
                     val isTap = !transformed && seekOrigin == null &&
                         abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()
+                    // Swipes and pinches still refresh the existing auto-hide timer.
+                    // Only a genuine tap can toggle the overlays.
+                    if (media.isVideo && !isTap) notifyInteraction()
                     if (!transformed && zoom <= 1.01f && seekOrigin == null &&
                         abs(vertical) > 85.dp.toPx() && abs(vertical) > abs(horizontal) * 1.2f) {
                         pendingZoomSingleTap?.cancel()
@@ -390,22 +394,34 @@ fun ViewerScreen(
                         // Double-tap while zoomed restores BOTH scale and panning.
                         // Hold a zoomed single tap briefly so the first tap does not
                         // accidentally toggle video playback during a double tap.
-                        val insidePlayZone = isCenterVideoTap(
+                        val videoAction = videoTapAction(
                             down.position.x, down.position.y,
                             size.width.toFloat(), size.height.toFloat(),
                         )
                         fun performSingleTap() {
                             if (media.isVideo) {
-                                if (insidePlayZone) {
-                                    if (player?.isPlaying == true) {
-                                        player.pause()
-                                        playing = false
-                                    } else {
-                                        player?.play()
-                                        playing = true
+                                when (videoAction) {
+                                    VideoTapAction.PLAY_OR_PAUSE -> {
+                                        // Keep the existing center-tap playback gesture.
+                                        notifyInteraction()
+                                        if (player?.isPlaying == true) {
+                                            player.pause()
+                                            playing = false
+                                        } else {
+                                            player?.play()
+                                            playing = true
+                                        }
+                                    }
+                                    VideoTapAction.TOGGLE_CONTROLS -> {
+                                        // Manual toggle applies to the title, details,
+                                        // progress bar and right-side volume together.
+                                        if (showControls) {
+                                            showControls = false
+                                        } else {
+                                            notifyInteraction()
+                                        }
                                     }
                                 }
-                                // Outside center only reveals controls; never toggles video.
                             } else {
                                 showControls = !showControls
                             }
@@ -896,6 +912,20 @@ internal fun isCenterVideoTap(
 ): Boolean = width > 0f && height > 0f &&
     x >= width * 0.25f && x <= width * 0.75f &&
     y >= height * 0.28f && y <= height * 0.64f
+
+/** An outside-center tap changes overlay visibility, never playback. */
+internal enum class VideoTapAction { PLAY_OR_PAUSE, TOGGLE_CONTROLS }
+
+internal fun videoTapAction(
+    x: Float,
+    y: Float,
+    width: Float,
+    height: Float,
+): VideoTapAction = if (isCenterVideoTap(x, y, width, height)) {
+    VideoTapAction.PLAY_OR_PAUSE
+} else {
+    VideoTapAction.TOGGLE_CONTROLS
+}
 
 // Keep gesture priority deterministic regardless of zoom. Pure for regression testing.
 internal fun shouldSeekVideoSwipe(
