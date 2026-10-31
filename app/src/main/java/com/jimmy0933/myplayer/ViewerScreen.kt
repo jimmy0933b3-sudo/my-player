@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.ZoomOutMap
@@ -58,6 +58,10 @@ fun ViewerScreen(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     onChange: (Int) -> Unit,
+    hasPreviousVideo: Boolean,
+    hasNextVideo: Boolean,
+    onPreviousVideo: () -> Unit,
+    onNextVideo: () -> Unit,
 ) {
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -88,6 +92,22 @@ fun ViewerScreen(
     var playing by remember(media.uri) { mutableStateOf(media.isVideo) }
     var currentMs by remember(media.uri) { mutableLongStateOf(0L) }
     var seekHint by remember(media.uri) { mutableStateOf<String?>(null) }
+    // Any touch or control action renews the idle timer and reveals the overlays.
+    var lastInteraction by remember(media.uri) { mutableIntStateOf(0) }
+    fun notifyInteraction() {
+        lastInteraction++
+        showControls = true
+    }
+    // Only video playback auto-hides the top title and bottom controls.
+    // Pausing or navigating to a photo keeps controls visible.
+    LaunchedEffect(media.uri, playing, lastInteraction) {
+        if (media.isVideo && playing) {
+            delay(2_000L)
+            showControls = false
+        } else if (media.isVideo && !playing) {
+            showControls = true
+        }
+    }
 
     LaunchedEffect(player) {
         while (isActive && player != null) {
@@ -134,6 +154,7 @@ fun ViewerScreen(
             Modifier.fillMaxSize().pointerInput(media.uri, player) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    notifyInteraction()
                     var vertical = 0f
                     var horizontal = 0f
                     var transformed = false
@@ -226,8 +247,9 @@ fun ViewerScreen(
                                     player?.play()
                                     playing = true
                                 }
-                                showControls = true
                             }
+                            // Non-center taps only reveal the overlays. In particular,
+                            // taps near the progress bar must never pause playback.
                         } else {
                             showControls = !showControls
                         }
@@ -257,7 +279,7 @@ fun ViewerScreen(
                         bottom = if (isLandscape) 8.dp else 40.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = { notifyInteraction(); onBack() }) {
                     Icon(Icons.Default.ArrowBack, "返回縮圖", tint = Color.White)
                 }
                 Column(Modifier.weight(1f)) {
@@ -273,12 +295,18 @@ fun ViewerScreen(
                     }
                 }
                 if (zoom > 1.01f) {
-                    IconButton(onClick = { zoom = 1f; translation = Offset.Zero }) {
+                    IconButton(onClick = {
+                        notifyInteraction()
+                        zoom = 1f
+                        translation = Offset.Zero
+                    }) {
                         Icon(Icons.Default.ZoomOutMap, "重設縮放", tint = Color.White)
                     }
                 }
                 IconButton(onClick = {
+                    notifyInteraction()
                     player?.pause()
+                    playing = false
                     onDelete()
                 }) {
                     Icon(
@@ -299,6 +327,7 @@ fun ViewerScreen(
             ) {
                 if (media.isVideo) {
                     val seekToFraction: (Float) -> Unit = { fraction ->
+                        notifyInteraction()
                         if (totalDuration > 0L) {
                             val target = (fraction * totalDuration).toLong()
                             player?.seekTo(target)
@@ -313,16 +342,25 @@ fun ViewerScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             IconButton(
-                                onClick = {
-                                    player?.seekTo(((player?.currentPosition ?: 0L) - 10_000L).coerceAtLeast(0L))
-                                },
+                                enabled = hasPreviousVideo,
+                                onClick = { notifyInteraction(); onPreviousVideo() },
                                 modifier = Modifier.size(40.dp),
                             ) {
-                                Icon(Icons.Default.FastRewind, "倒退10秒",
-                                    tint = Color.White, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Default.SkipPrevious, "上一部影片",
+                                    tint = if (hasPreviousVideo) Color.White else Color.Gray,
+                                    modifier = Modifier.size(24.dp))
                             }
                             IconButton(
-                                onClick = { if (playing) player?.pause() else player?.play() },
+                                onClick = {
+                                    notifyInteraction()
+                                    if (playing) {
+                                        player?.pause()
+                                        playing = false
+                                    } else {
+                                        player?.play()
+                                        playing = true
+                                    }
+                                },
                                 modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
@@ -332,14 +370,13 @@ fun ViewerScreen(
                                 )
                             }
                             IconButton(
-                                onClick = {
-                                    player?.seekTo(((player?.currentPosition ?: 0L) + 10_000L)
-                                        .coerceAtMost(totalDuration.coerceAtLeast(0L)))
-                                },
+                                enabled = hasNextVideo,
+                                onClick = { notifyInteraction(); onNextVideo() },
                                 modifier = Modifier.size(40.dp),
                             ) {
-                                Icon(Icons.Default.FastForward, "快轉10秒",
-                                    tint = Color.White, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Default.SkipNext, "下一部影片",
+                                    tint = if (hasNextVideo) Color.White else Color.Gray,
+                                    modifier = Modifier.size(24.dp))
                             }
                             Text(
                                 durationLabel(currentMs),
@@ -372,14 +409,26 @@ fun ViewerScreen(
                             Text(durationLabel(totalDuration), style = MaterialTheme.typography.labelMedium)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                val seekTo = (player?.currentPosition ?: 0L) - 10_000L
-                                player?.seekTo(seekTo.coerceAtLeast(0L))
-                            }) { Icon(Icons.Default.FastRewind, "倒退10秒",
-                                tint = Color.White, modifier = Modifier.size(30.dp)) }
+                            IconButton(
+                                enabled = hasPreviousVideo,
+                                onClick = { notifyInteraction(); onPreviousVideo() },
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipPrevious, "上一部影片",
+                                    tint = if (hasPreviousVideo) Color.White else Color.Gray,
+                                    modifier = Modifier.size(30.dp),
+                                )
+                            }
                             Spacer(Modifier.width(28.dp))
                             IconButton(onClick = {
-                                if (playing) player?.pause() else player?.play()
+                                notifyInteraction()
+                                if (playing) {
+                                    player?.pause()
+                                    playing = false
+                                } else {
+                                    player?.play()
+                                    playing = true
+                                }
                             }) {
                                 Icon(
                                     if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
@@ -388,14 +437,19 @@ fun ViewerScreen(
                                 )
                             }
                             Spacer(Modifier.width(28.dp))
-                            IconButton(onClick = {
-                                val next = (player?.currentPosition ?: 0L) + 10_000L
-                                player?.seekTo(next.coerceAtMost(totalDuration.coerceAtLeast(0L)))
-                            }) { Icon(Icons.Default.FastForward, "快轉10秒",
-                                tint = Color.White, modifier = Modifier.size(30.dp)) }
+                            IconButton(
+                                enabled = hasNextVideo,
+                                onClick = { notifyInteraction(); onNextVideo() },
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipNext, "下一部影片",
+                                    tint = if (hasNextVideo) Color.White else Color.Gray,
+                                    modifier = Modifier.size(30.dp),
+                                )
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("上下滑切換  ·  左右滑快轉／倒退  ·  雙指縮放",
+                        Text("上一部／下一部影片  ·  左右滑快轉／倒退  ·  雙指縮放",
                             color = Color(0xFFB8C5DD), style = MaterialTheme.typography.labelSmall)
                     }
                 } else if (!isLandscape) {
