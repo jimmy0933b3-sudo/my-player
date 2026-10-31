@@ -11,7 +11,7 @@ enum class VideoDecoderPreference {
 }
 
 data class DecoderPreferences(
-    val video: VideoDecoderPreference = VideoDecoderPreference.SYSTEM,
+    val video: VideoDecoderPreference = VideoDecoderPreference.HARDWARE_FIRST,
     val softwareAudioFirst: Boolean = false,
     val decoderFallback: Boolean = true,
     val recoverOnPlaybackError: Boolean = true,
@@ -25,9 +25,9 @@ object DecoderSettings {
         val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         val video = runCatching {
             VideoDecoderPreference.valueOf(
-                prefs.getString("video_mode", VideoDecoderPreference.SYSTEM.name).orEmpty(),
+                prefs.getString("video_mode", VideoDecoderPreference.HARDWARE_FIRST.name).orEmpty(),
             )
-        }.getOrDefault(VideoDecoderPreference.SYSTEM)
+        }.getOrDefault(VideoDecoderPreference.HARDWARE_FIRST)
         return DecoderPreferences(
             video = video,
             softwareAudioFirst = prefs.getBoolean("software_audio", false),
