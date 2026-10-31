@@ -146,8 +146,11 @@ private fun MyPlayerApp() {
     }
     var sort by remember {
         mutableStateOf(runCatching {
-            MediaSort.valueOf(galleryPrefs.getString("sort", "CREATED") ?: "CREATED")
-        }.getOrDefault(MediaSort.CREATED))
+            MediaSort.valueOf(
+                galleryPrefs.getString("sort", MediaSort.MODIFIED.name)
+                    ?: MediaSort.MODIFIED.name,
+            )
+        }.getOrDefault(MediaSort.MODIFIED))
     }
     var ascending by remember { mutableStateOf(galleryPrefs.getBoolean("ascending", false)) }
     var query by remember { mutableStateOf(galleryPrefs.getString("query", "").orEmpty()) }
@@ -812,16 +815,17 @@ private fun GalleryScreen(
     // Only chronological sorting displays date sections. Keep the original
     // indices so tapping an item still opens the correct position in the viewer.
     val dateGroups = remember(visible, sort) {
-        if (sort == MediaSort.CREATED) MediaLibrary.groupByCreatedDay(visible)
-        else emptyList()
+        MediaLibrary.groupByDay(visible, sort)
     }
     LaunchedEffect(returnToMediaUri, visible, folders, sort, listMode, loading) {
         val targetUri = returnToMediaUri ?: return@LaunchedEffect
         if (loading) return@LaunchedEffect
         val mediaIndex = visible.indexOfFirst { it.uri.toString() == targetUri }
         if (mediaIndex >= 0) {
-            val dayKeys = if (sort == MediaSort.CREATED) {
-                visible.map { MediaLibrary.createdDayKey(it.createdAtMs) }
+            val dayKeys = if (sort != MediaSort.SIZE) {
+                visible.map {
+                    MediaLibrary.createdDayKey(MediaLibrary.sortTimestamp(it, sort))
+                }
             } else {
                 List(visible.size) { "" }
             }
@@ -829,7 +833,7 @@ private fun GalleryScreen(
                 mediaIndex = mediaIndex,
                 dayKeys = dayKeys,
                 folderRows = folders.size,
-                groupedByDay = sort == MediaSort.CREATED,
+                groupedByDay = sort != MediaSort.SIZE,
             )
             if (itemIndex >= 0) {
                 if (listMode) listState.scrollToItem(itemIndex)
@@ -1083,10 +1087,13 @@ private fun GalleryScreen(
                             modifier = Modifier.size(34.dp),
                         ) {
                             Icon(
-                                if (sort == MediaSort.CREATED) Icons.Default.CalendarMonth
-                                else Icons.Default.Storage,
-                                if (sort == MediaSort.CREATED) "按建立時間排序"
-                                else "按檔案大小排序",
+                                if (sort == MediaSort.SIZE) Icons.Default.Storage
+                                else Icons.Default.CalendarMonth,
+                                when (sort) {
+                                    MediaSort.MODIFIED -> "按修改時間排序"
+                                    MediaSort.CREATED -> "按建立時間排序"
+                                    MediaSort.SIZE -> "按檔案大小排序"
+                                },
                                 tint = Accent,
                                 modifier = Modifier.size(21.dp),
                             )
@@ -1095,6 +1102,11 @@ private fun GalleryScreen(
                             expanded = sortMenu,
                             onDismissRequest = { sortMenu = false },
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("修改時間（預設）") },
+                                leadingIcon = { Icon(Icons.Default.Update, null) },
+                                onClick = { onSort(MediaSort.MODIFIED); sortMenu = false },
+                            )
                             DropdownMenuItem(
                                 text = { Text("建立時間") },
                                 leadingIcon = { Icon(Icons.Default.CalendarMonth, null) },
@@ -1171,7 +1183,7 @@ private fun GalleryScreen(
                         onToggleFavorite = { onToggleFavorite(folder.key) },
                     )
                 }
-                if (sort == MediaSort.CREATED) {
+                if (sort != MediaSort.SIZE) {
                     dateGroups.forEach { group ->
                         item(key = "date-${group.key}") {
                             DateGroupHeader(group.label, group.entries.size)
@@ -1224,7 +1236,7 @@ private fun GalleryScreen(
                         onToggleFavorite = { onToggleFavorite(folder.key) },
                     )
                 }
-                if (sort == MediaSort.CREATED) {
+                if (sort != MediaSort.SIZE) {
                     dateGroups.forEach { group ->
                         item(key = "date-${group.key}", span = { GridItemSpan(maxLineSpan) }) {
                             DateGroupHeader(group.label, group.entries.size)
