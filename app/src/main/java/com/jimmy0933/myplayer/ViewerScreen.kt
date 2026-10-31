@@ -80,6 +80,14 @@ fun ViewerScreen(
     var videoDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
     var audioDecoderName by remember(media.uri) { mutableStateOf<String?>(null) }
     var decoderStatus by remember(media.uri) { mutableStateOf<String?>(null) }
+    // A successful fallback shouldn't leave a permanent banner over the video.
+    // Keep terminal error messages visible so unsupported files are diagnosable.
+    LaunchedEffect(decoderStatus) {
+        if (decoderStatus?.startsWith("已重新選用解碼器") == true) {
+            delay(2_500L)
+            decoderStatus = null
+        }
+    }
     val effectiveDecoder = if (softwareRetryAttempted) {
         decoderPreferences.copy(video = VideoDecoderPreference.SOFTWARE_FIRST)
     } else decoderPreferences
