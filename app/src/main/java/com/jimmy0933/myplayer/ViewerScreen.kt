@@ -1,4 +1,7 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+@file:OptIn(
+    androidx.media3.common.util.UnstableApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 
 package com.jimmy0933.myplayer
 
@@ -17,6 +20,7 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.ZoomOutMap
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -50,6 +54,7 @@ fun ViewerScreen(
     total: Int,
     loader: ImageLoader,
     onBack: () -> Unit,
+    onDelete: () -> Unit,
     onChange: (Int) -> Unit,
 ) {
     val context = LocalContext.current
@@ -231,6 +236,16 @@ fun ViewerScreen(
                     IconButton(onClick = { zoom = 1f; translation = Offset.Zero }) {
                         Icon(Icons.Default.ZoomOutMap, "重設縮放", tint = Color.White)
                     }
+                }
+                IconButton(onClick = {
+                    player?.pause()
+                    onDelete()
+                }) {
+                    Icon(
+                        Icons.Default.DeleteOutline,
+                        "刪除此圖片或影片",
+                        tint = Color(0xFFFF9DA6),
+                    )
                 }
             }
             Column(

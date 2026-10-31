@@ -1,11 +1,19 @@
 package com.jimmy0933.myplayer
 
+import android.Manifest
+import android.app.Activity
+import android.app.RecoverableSecurityException
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -92,6 +100,119 @@ private fun MyPlayerApp() {
     var listMode by remember { mutableStateOf(false) }
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
+    var deleteConfirmation by remember { mutableStateOf<LocalMedia?>(null) }
+    var deletePending by remember { mutableStateOf<LocalMedia?>(null) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    var deleting by remember { mutableStateOf(false) }
+
+    fun removeDeletedMedia(target: LocalMedia) {
+        allMedia = allMedia.filterNot { it.uri == target.uri }
+        val openItems = viewerItems
+        if (openItems != null) {
+            val remaining = openItems.filterNot { it.uri == target.uri }
+            if (remaining.isEmpty()) {
+                viewerItems = null
+                viewerIndex = 0
+            } else {
+                viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
+                viewerItems = remaining
+            }
+        }
+        refresh++ // Reconcile with MediaStore, including dates and count chips.
+    }
+
+    fun directlyDeleteMedia(target: LocalMedia) {
+        try {
+            val count = context.contentResolver.delete(target.uri, null, null)
+            if (count > 0) {
+                removeDeletedMedia(target)
+            } else {
+                deleteError = "找不到此檔案，可能已被其他應用程式刪除。"
+                refresh++
+            }
+        } catch (_: SecurityException) {
+            deleteError = "沒有刪除這個檔案的權限，請確認系統授權。"
+        } catch (_: Exception) {
+            deleteError = "刪除失敗，請稍後重試。"
+        } finally {
+            deleting = false
+        }
+    }
+
+    // Android 11+ performs the deletion in the system confirmation UI.
+    // Android 10 grants single-item write access, after which deletion is retried.
+    val systemDeleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val target = deletePending
+        deletePending = null
+        deleting = false
+        if (result.resultCode == Activity.RESULT_OK && target != null) {
+            if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                directlyDeleteMedia(target)
+            } else {
+                removeDeletedMedia(target)
+            }
+        }
+        // A cancelled system prompt must leave the original file and list untouched.
+    }
+    val legacyWriteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val target = deletePending
+        deletePending = null
+        deleting = false
+        if (granted && target != null) directlyDeleteMedia(target)
+        else if (!granted) deleteError = "刪除需要儲存空間寫入權限。"
+    }
+    fun requestMediaDeletion(target: LocalMedia) {
+        deleting = true
+        deleteError = null
+        try {
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                    deletePending = target
+                    val request = MediaStore.createDeleteRequest(
+                        context.contentResolver,
+                        listOf(target.uri),
+                    )
+                    systemDeleteLauncher.launch(
+                        IntentSenderRequest.Builder(request.intentSender).build(),
+                    )
+                }
+                Build.VERSION.SDK_INT == Build.VERSION_CODES.Q -> {
+                    try {
+                        val count = context.contentResolver.delete(target.uri, null, null)
+                        if (count > 0) removeDeletedMedia(target)
+                        else {
+                            deleteError = "找不到此檔案，可能已被刪除。"
+                            refresh++
+                        }
+                        deleting = false
+                    } catch (e: RecoverableSecurityException) {
+                        deletePending = target
+                        systemDeleteLauncher.launch(
+                            IntentSenderRequest.Builder(
+                                e.userAction.actionIntent.intentSender,
+                            ).build(),
+                        )
+                    }
+                }
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                ) != PackageManager.PERMISSION_GRANTED -> {
+                    deletePending = target
+                    legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+                else -> directlyDeleteMedia(target)
+            }
+        } catch (_: Exception) {
+            deletePending = null
+            deleting = false
+            deleteError = "無法啟動刪除流程，請稍後再試。"
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -129,6 +250,7 @@ private fun MyPlayerApp() {
                 total = viewerList.size,
                 loader = loader,
                 onBack = { viewerItems = null },
+                onDelete = { deleteConfirmation = viewerList[viewerIndex] },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
                 },
@@ -163,6 +285,42 @@ private fun MyPlayerApp() {
             onOpen = { index ->
                 viewerItems = visible.toList()
                 viewerIndex = index
+            },
+        )
+    }
+    deleteConfirmation?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!deleting) deleteConfirmation = null },
+            title = { Text("刪除此${if (target.isVideo) "影片" else "圖片"}？") },
+            text = {
+                Text(
+                    "確定要從手機刪除「${target.name}」嗎？此操作會刪除原始檔案，無法在播放器內復原。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleteConfirmation = null
+                        requestMediaDeletion(target)
+                    },
+                ) { Text("刪除", color = Color(0xFFFF8792)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !deleting,
+                    onClick = { deleteConfirmation = null },
+                ) { Text("取消") }
+            },
+        )
+    }
+    deleteError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { deleteError = null },
+            title = { Text("刪除未完成") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { deleteError = null }) { Text("知道了") }
             },
         )
     }
