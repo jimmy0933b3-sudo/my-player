@@ -53,6 +53,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -862,61 +864,92 @@ private fun GalleryScreen(
             // and the gallery items above the system navigation bar.
             .safeDrawingPadding(),
     ) {
-        // Keep the library visible: secondary controls and tall summary cards
-        // are collapsed by default instead of occupying most of the screen.
+        // All gallery navigation and primary actions share a single icon-only
+        // toolbar. Equal-width slots keep everything on one row on narrow phones.
+        // Content descriptions preserve accessibility without visible labels.
         Column(
             Modifier.fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(40.dp),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "影像庫",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Text(
-                        photoCount.toString() + " 張照片 · " + videoCount + " 支影片",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Subtle,
-                        maxLines = 1,
-                    )
-                }
+                BrowserIconTab(
+                    title = "全部影像",
+                    image = Icons.Default.PhotoLibrary,
+                    selected = browserMode == BrowserMode.ALL,
+                    modifier = Modifier.weight(1f),
+                ) { onBrowserModeChange(BrowserMode.ALL) }
+                BrowserIconTab(
+                    title = "資料夾",
+                    image = Icons.Default.Folder,
+                    selected = browserMode == BrowserMode.FOLDERS,
+                    modifier = Modifier.weight(1f),
+                ) { onBrowserModeChange(BrowserMode.FOLDERS) }
+                BrowserIconTab(
+                    title = "最愛",
+                    image = Icons.Default.Star,
+                    selected = browserMode == BrowserMode.FAVORITES,
+                    modifier = Modifier.weight(1f),
+                ) { onBrowserModeChange(BrowserMode.FAVORITES) }
+
+                Spacer(Modifier.width(4.dp))
+
                 IconButton(
                     onClick = onSearchToggle,
-                    modifier = Modifier.size(38.dp),
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                        .background(
+                            if (searchExpanded) Accent.copy(alpha = 0.2f) else Color.Transparent,
+                            RoundedCornerShape(12.dp),
+                        ),
                 ) {
                     Icon(
                         if (searchExpanded) Icons.Default.Close else Icons.Default.Search,
                         if (searchExpanded) "收合搜尋" else "展開搜尋",
                         tint = if (searchExpanded) Mint else Subtle,
+                        modifier = Modifier.size(22.dp),
                     )
                 }
                 IconButton(
                     onClick = { detailsExpanded = !detailsExpanded },
-                    modifier = Modifier.size(38.dp),
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                        .background(
+                            if (detailsExpanded) Accent.copy(alpha = 0.2f) else Color.Transparent,
+                            RoundedCornerShape(12.dp),
+                        ),
                 ) {
                     Icon(
                         if (detailsExpanded) Icons.Default.ExpandLess else Icons.Default.Tune,
                         if (detailsExpanded) "收合更多工具" else "展開更多工具",
                         tint = if (detailsExpanded) Mint else Subtle,
+                        modifier = Modifier.size(22.dp),
                     )
                 }
-                if (browserMode != BrowserMode.FAVORITES) {
-                    IconButton(onClick = onToggleMode, modifier = Modifier.size(38.dp)) {
-                        Icon(
-                            if (listMode) Icons.Default.GridView else Icons.Default.ViewList,
-                            if (listMode) "切換網格" else "切換清單",
-                            tint = Accent,
-                        )
-                    }
+                IconButton(
+                    onClick = onToggleMode,
+                    enabled = browserMode != BrowserMode.FAVORITES,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    Icon(
+                        if (listMode) Icons.Default.GridView else Icons.Default.ViewList,
+                        if (listMode) "切換網格" else "切換清單",
+                        tint = if (browserMode == BrowserMode.FAVORITES) Subtle.copy(alpha = 0.35f)
+                               else Accent,
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
-                IconButton(onClick = onPlaybackSettings, modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Default.Settings, "播放進度條設定", tint = Subtle)
+                IconButton(
+                    onClick = onPlaybackSettings,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        "播放進度條設定",
+                        tint = Subtle,
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
             }
 
@@ -1019,19 +1052,6 @@ private fun GalleryScreen(
                         )
                     }
                 }
-            }
-
-            Spacer(Modifier.height(5.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                BrowserTab(
-                    "全部影像", Icons.Default.PhotoLibrary, browserMode == BrowserMode.ALL,
-                ) { onBrowserModeChange(BrowserMode.ALL) }
-                BrowserTab(
-                    "資料夾", Icons.Default.Folder, browserMode == BrowserMode.FOLDERS,
-                ) { onBrowserModeChange(BrowserMode.FOLDERS) }
-                BrowserTab(
-                    "最愛", Icons.Default.Star, browserMode == BrowserMode.FAVORITES,
-                ) { onBrowserModeChange(BrowserMode.FAVORITES) }
             }
 
             if (browserMode == BrowserMode.FOLDERS) {
@@ -1278,24 +1298,28 @@ private fun GalleryScreen(
 }
 
 @Composable
-private fun BrowserTab(
+private fun BrowserIconTab(
     title: String,
     image: androidx.compose.ui.graphics.vector.ImageVector,
     selected: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .background(if (selected) Accent.copy(alpha = 0.22f) else Panel, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.fillMaxHeight()
+            .background(
+                if (selected) Accent.copy(alpha = 0.27f) else Color.Transparent,
+                RoundedCornerShape(12.dp),
+            )
+            .semantics { stateDescription = if (selected) "已選取" else "未選取" },
     ) {
-        Icon(image, null, tint = if (selected) Mint else Subtle, modifier = Modifier.size(17.dp))
-        Text(title, color = if (selected) Color.White else Subtle,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            style = MaterialTheme.typography.labelMedium)
+        Icon(
+            image,
+            contentDescription = title,
+            tint = if (selected) Mint else Subtle,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
