@@ -435,15 +435,19 @@ fun ViewerScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White,
                             )
-                            VideoProgressSlider(
-                                value = sliderPosition,
-                                onValueChange = seekToFraction,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
-                                    .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
-                                scale = progressBarScale,
-                            )
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                VideoProgressSlider(
+                                    value = sliderPosition,
+                                    onValueChange = seekToFraction,
+                                    modifier = Modifier
+                                        .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
+                                        .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
+                                    scale = progressBarScale,
+                                )
+                            }
                             Text(
                                 durationLabel(totalDuration),
                                 style = MaterialTheme.typography.labelSmall,
