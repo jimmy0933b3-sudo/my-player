@@ -153,6 +153,17 @@ private fun MyPlayerApp() {
         progressBarWidth = PlaybackProgressStyle.width(newValue)
         playbackPrefs.edit().putFloat("progress_width", progressBarWidth).apply()
     }
+    var landscapeDisplayMode by remember {
+        mutableStateOf(
+            LandscapeVideoDisplay.fromSaved(
+                playbackPrefs.getString("landscape_display_mode", null),
+            ),
+        )
+    }
+    fun updateLandscapeDisplayMode(newMode: LandscapeVideoDisplay) {
+        landscapeDisplayMode = newMode
+        playbackPrefs.edit().putString("landscape_display_mode", newMode.name).apply()
+    }
     var controlsAutoHideSeconds by remember {
         mutableIntStateOf(
             PlaybackControlsTimeout.normalize(
@@ -540,6 +551,7 @@ private fun MyPlayerApp() {
                 progressBarScale = progressBarScale,
                 progressBarWidth = progressBarWidth,
                 controlsAutoHideSeconds = controlsAutoHideSeconds,
+                landscapeDisplayMode = landscapeDisplayMode,
                 decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
@@ -769,6 +781,36 @@ private fun MyPlayerApp() {
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
                     Text(
+                        "橫向影片顯示",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Color.White,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(
+                            LandscapeVideoDisplay.FIT to "完整",
+                            LandscapeVideoDisplay.SMART to "減少黑邊",
+                            LandscapeVideoDisplay.FILL to "填滿",
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = landscapeDisplayMode == mode,
+                                onClick = { updateLandscapeDisplayMode(mode) },
+                                label = { Text(label, maxLines = 1) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    Text(
+                        "預設「減少黑邊」會依影片比例適度放大，最多放大 18%。" +
+                            "「完整」不裁切；「填滿」可能裁切影片上下或左右內容。",
+                        color = Subtle,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
                         "標題與進度條消失時間：" +
                             if (controlsAutoHideSeconds == PlaybackControlsTimeout.NEVER) {
                                 "不自動隱藏"
@@ -819,6 +861,7 @@ private fun MyPlayerApp() {
                         updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
                         updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
                         updateControlsAutoHideSeconds(PlaybackControlsTimeout.DEFAULT_SECONDS)
+                        updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
                     }) {
                         Text("恢復預設")
                     }
