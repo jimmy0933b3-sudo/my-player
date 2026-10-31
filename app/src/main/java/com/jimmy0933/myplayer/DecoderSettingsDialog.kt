@@ -37,11 +37,11 @@ internal fun DecoderSettingsDialog(
             ) {
                 Text("影片解碼（本機）", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "選擇 Android 系統已安裝的解碼器優先順序，實際能否使用依手機及影片格式而定。",
+                    "優先用手機硬體解碼，減少處理負擔；無法解碼時才嘗試備援。原始影片畫質不會被重新壓縮。",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                DecoderModeRow("系統自動（推薦）", VideoDecoderPreference.SYSTEM, settings, onChange)
-                DecoderModeRow("硬體優先（省電）", VideoDecoderPreference.HARDWARE_FIRST, settings, onChange)
+                DecoderModeRow("系統自動", VideoDecoderPreference.SYSTEM, settings, onChange)
+                DecoderModeRow("硬體優先（預設，清晰流暢）", VideoDecoderPreference.HARDWARE_FIRST, settings, onChange)
                 DecoderModeRow("軟體優先（相容性）", VideoDecoderPreference.SOFTWARE_FIRST, settings, onChange)
 
                 HorizontalDivider()
