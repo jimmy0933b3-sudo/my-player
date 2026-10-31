@@ -306,7 +306,7 @@ fun ViewerScreen(
                         ) {
                             IconButton(
                                 onClick = {
-                                    player?.seekTo(((player.currentPosition) - 10_000L).coerceAtLeast(0L))
+                                    player?.seekTo(((player?.currentPosition ?: 0L) - 10_000L).coerceAtLeast(0L))
                                 },
                                 modifier = Modifier.size(40.dp),
                             ) {
@@ -325,7 +325,7 @@ fun ViewerScreen(
                             }
                             IconButton(
                                 onClick = {
-                                    player?.seekTo(((player.currentPosition) + 10_000L)
+                                    player?.seekTo(((player?.currentPosition ?: 0L) + 10_000L)
                                         .coerceAtMost(totalDuration.coerceAtLeast(0L)))
                                 },
                                 modifier = Modifier.size(40.dp),
