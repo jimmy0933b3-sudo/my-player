@@ -5,6 +5,16 @@ import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.collect
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -86,6 +96,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 private fun MyPlayerApp() {
     val context = LocalContext.current
@@ -99,14 +110,29 @@ private fun MyPlayerApp() {
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
     var permissionAsked by remember { mutableStateOf(false) }
-    var filter by remember { mutableStateOf(MediaFilter.ALL) }
-    var sort by remember { mutableStateOf(MediaSort.CREATED) }
-    var ascending by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var searchExpanded by remember { mutableStateOf(false) }
-    var listMode by remember { mutableStateOf(false) }
-    var browserMode by remember { mutableStateOf(BrowserMode.ALL) }
-    var currentFolderKey by remember { mutableStateOf<String?>(null) }
+    val galleryPrefs = remember(context) {
+        context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
+    }
+    var filter by remember {
+        mutableStateOf(runCatching {
+            MediaFilter.valueOf(galleryPrefs.getString("filter", "ALL") ?: "ALL")
+        }.getOrDefault(MediaFilter.ALL))
+    }
+    var sort by remember {
+        mutableStateOf(runCatching {
+            MediaSort.valueOf(galleryPrefs.getString("sort", "CREATED") ?: "CREATED")
+        }.getOrDefault(MediaSort.CREATED))
+    }
+    var ascending by remember { mutableStateOf(galleryPrefs.getBoolean("ascending", false)) }
+    var query by remember { mutableStateOf(galleryPrefs.getString("query", "").orEmpty()) }
+    var searchExpanded by remember { mutableStateOf(query.isNotEmpty()) }
+    var listMode by remember { mutableStateOf(galleryPrefs.getBoolean("list_mode", false)) }
+    var browserMode by remember {
+        mutableStateOf(runCatching {
+            BrowserMode.valueOf(galleryPrefs.getString("browser", "ALL") ?: "ALL")
+        }.getOrDefault(BrowserMode.ALL))
+    }
+    var currentFolderKey by remember { mutableStateOf(galleryPrefs.getString("folder", null)) }
     val favoritePrefs = remember(context) {
         context.getSharedPreferences("my_player_folders", android.content.Context.MODE_PRIVATE)
     }
@@ -123,8 +149,46 @@ private fun MyPlayerApp() {
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
     // Retain the gallery viewport even while the fullscreen viewer is displayed.
-    val galleryListState = rememberLazyListState()
-    val galleryGridState = rememberLazyGridState()
+    val galleryListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = galleryPrefs.getInt("list_index", 0).coerceAtLeast(0),
+        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("list_offset", 0).coerceAtLeast(0),
+    )
+    val galleryGridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = galleryPrefs.getInt("grid_index", 0).coerceAtLeast(0),
+        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("grid_offset", 0).coerceAtLeast(0),
+    )
+    fun saveScroll() {
+        galleryPrefs.edit()
+            .putInt("list_index", galleryListState.firstVisibleItemIndex)
+            .putInt("list_offset", galleryListState.firstVisibleItemScrollOffset)
+            .putInt("grid_index", galleryGridState.firstVisibleItemIndex)
+            .putInt("grid_offset", galleryGridState.firstVisibleItemScrollOffset)
+            .apply()
+    }
+    fun saveBrowser() {
+        galleryPrefs.edit()
+            .putString("filter", filter.name)
+            .putString("sort", sort.name)
+            .putBoolean("ascending", ascending)
+            .putString("query", query)
+            .putBoolean("list_mode", listMode)
+            .putString("browser", browserMode.name)
+            .putString("folder", currentFolderKey)
+            .apply()
+    }
+    LaunchedEffect(filter, sort, ascending, query, listMode, browserMode, currentFolderKey) {
+        saveBrowser()
+    }
+    LaunchedEffect(galleryListState) {
+        snapshotFlow {
+            galleryListState.firstVisibleItemIndex to galleryListState.firstVisibleItemScrollOffset
+        }.debounce(350).collect { saveScroll() }
+    }
+    LaunchedEffect(galleryGridState) {
+        snapshotFlow {
+            galleryGridState.firstVisibleItemIndex to galleryGridState.firstVisibleItemScrollOffset
+        }.debounce(350).collect { saveScroll() }
+    }
     var openedMediaUri by remember { mutableStateOf<String?>(null) }
     var pendingReturnUri by remember { mutableStateOf<String?>(null) }
     fun closeViewer() {
@@ -134,14 +198,24 @@ private fun MyPlayerApp() {
         viewerItems = null
         openedMediaUri = null
     }
-    var deleteConfirmation by remember { mutableStateOf<LocalMedia?>(null) }
-    var deletePending by remember { mutableStateOf<LocalMedia?>(null) }
+    var deleteConfirmation by remember { mutableStateOf<List<LocalMedia>?>(null) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf(emptySet<String>()) }
+    var mediaManageInfo by remember { mutableStateOf(false) }
+    var canManageMedia by remember {
+        mutableStateOf(Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context))
+    }
+    var pendingBatch by remember { mutableStateOf(emptyList<LocalMedia>()) }
+    var deleteQueue by remember { mutableStateOf(emptyList<LocalMedia>()) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
+    var deletedCount by remember { mutableIntStateOf(0) }
+    var failedCount by remember { mutableIntStateOf(0) }
+    var cancelledDeletion by remember { mutableStateOf(false) }
+    var currentChunkLimit by remember { mutableIntStateOf(BatchDeletePolicy.MAX_REQUEST_ITEMS) }
+    var approvedLegacyUri by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
-    // Let the sensor rotate the viewer even when Android auto-rotate is disabled.
-    // Keep the media library upright; Compose and ExoPlayer survive orientation
-    // changes because the activity handles orientation/screenSize config changes.
     val requestedScreenOrientation = if (viewerItems != null) {
         ActivityInfo.SCREEN_ORIENTATION_SENSOR
     } else {
@@ -153,120 +227,158 @@ private fun MyPlayerApp() {
         }
     }
 
-    // Start at the top of a new folder/search/sort, but not after closing a viewer.
-    LaunchedEffect(browserMode, currentFolderKey, filter, sort, ascending, query) {
-        galleryListState.scrollToItem(0)
-        galleryGridState.scrollToItem(0)
-    }
-
-    fun removeDeletedMedia(target: LocalMedia) {
-        allMedia = allMedia.filterNot { it.uri == target.uri }
-        val openItems = viewerItems
-        if (openItems != null) {
-            val remaining = openItems.filterNot { it.uri == target.uri }
-            if (remaining.isEmpty()) {
+    fun removeDeletedMedia(items: List<LocalMedia>) {
+        if (items.isEmpty()) return
+        val removed = items.mapTo(mutableSetOf()) { it.uri.toString() }
+        allMedia = allMedia.filterNot { it.uri.toString() in removed }
+        selectedUris = selectedUris - removed
+        viewerItems?.let { before ->
+            val activeUri = before.getOrNull(viewerIndex)?.uri?.toString()
+            val after = before.filterNot { it.uri.toString() in removed }
+            if (after.isEmpty()) {
                 viewerItems = null
                 openedMediaUri = null
                 pendingReturnUri = null
                 viewerIndex = 0
             } else {
-                viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
-                viewerItems = remaining
+                val newIndex = after.indexOfFirst { it.uri.toString() == activeUri }
+                viewerIndex = if (newIndex >= 0) newIndex else viewerIndex.coerceAtMost(after.lastIndex)
+                viewerItems = after
             }
-        }
-        refresh++ // Reconcile with MediaStore, including dates and count chips.
-    }
-
-    fun directlyDeleteMedia(target: LocalMedia) {
-        try {
-            val count = context.contentResolver.delete(target.uri, null, null)
-            if (count > 0) {
-                removeDeletedMedia(target)
-            } else {
-                deleteError = "找不到此檔案，可能已被其他應用程式刪除。"
-                refresh++
-            }
-        } catch (_: SecurityException) {
-            deleteError = "沒有刪除這個檔案的權限，請確認系統授權。"
-        } catch (_: Exception) {
-            deleteError = "刪除失敗，請稍後重試。"
-        } finally {
-            deleting = false
         }
     }
 
-    // Android 11+ performs the deletion in the system confirmation UI.
-    // Android 10 grants single-item write access, after which deletion is retried.
+    lateinit var processNext: () -> Unit
     val systemDeleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
-        val target = deletePending
-        deletePending = null
-        deleting = false
-        if (result.resultCode == Activity.RESULT_OK && target != null) {
+        val approved = pendingBatch
+        pendingBatch = emptyList()
+        if (result.resultCode == Activity.RESULT_OK) {
             if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
-                directlyDeleteMedia(target)
+                approvedLegacyUri = approved.firstOrNull()?.uri?.toString()
             } else {
-                removeDeletedMedia(target)
+                removeDeletedMedia(approved)
+                deletedCount += approved.size
+                deleteQueue = deleteQueue.drop(approved.size)
             }
+        } else {
+            cancelledDeletion = true
+            deleteQueue = emptyList()
         }
-        // A cancelled system prompt must leave the original file and list untouched.
+        processNext()
     }
     val legacyWriteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        val target = deletePending
-        deletePending = null
-        deleting = false
-        if (granted && target != null) directlyDeleteMedia(target)
-        else if (!granted) deleteError = "刪除需要儲存空間寫入權限。"
+        if (granted) processNext()
+        else {
+            cancelledDeletion = true
+            deleteQueue = emptyList()
+            processNext()
+        }
     }
-    fun requestMediaDeletion(target: LocalMedia) {
-        deleting = true
-        deleteError = null
-        try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                    deletePending = target
-                    val request = MediaStore.createDeleteRequest(
-                        context.contentResolver,
-                        listOf(target.uri),
-                    )
-                    systemDeleteLauncher.launch(
-                        IntentSenderRequest.Builder(request.intentSender).build(),
-                    )
+
+    processNext = {
+        if (deleteQueue.isEmpty()) {
+            deleting = false
+            pendingBatch = emptyList()
+            approvedLegacyUri = null
+            if (!cancelledDeletion && failedCount == 0) {
+                selectionMode = false
+                selectedUris = emptySet()
+            }
+            if (failedCount > 0 || cancelledDeletion) {
+                deleteError = "已刪除 " + deletedCount + " 個。" +
+                    (if (failedCount > 0) "失敗 " + failedCount + " 個。" else "") +
+                    (if (cancelledDeletion) "已取消剩餘檔案，未刪除的仍保留。" else "")
+            }
+            refresh++
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val batch = deleteQueue.take(currentChunkLimit)
+            try {
+                val request = MediaStore.createDeleteRequest(
+                    context.contentResolver, batch.map { it.uri },
+                )
+                pendingBatch = batch
+                systemDeleteLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            } catch (_: Exception) {
+                // Isolate an invalid URI without losing the other selected items.
+                if (batch.size > 1) {
+                    currentChunkLimit = 1
+                } else {
+                    failedCount++
+                    deleteQueue = deleteQueue.drop(1)
                 }
-                Build.VERSION.SDK_INT == Build.VERSION_CODES.Q -> {
+                scope.launch { processNext() }
+            }
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED) {
+            legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            val item = deleteQueue.first()
+            scope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    runCatching { context.contentResolver.delete(item.uri, null, null) }
+                }
+                val failure = outcome.exceptionOrNull()
+                if (failure is RecoverableSecurityException &&
+                    Build.VERSION.SDK_INT == Build.VERSION_CODES.Q &&
+                    approvedLegacyUri != item.uri.toString()) {
                     try {
-                        val count = context.contentResolver.delete(target.uri, null, null)
-                        if (count > 0) removeDeletedMedia(target)
-                        else {
-                            deleteError = "找不到此檔案，可能已被刪除。"
-                            refresh++
-                        }
-                        deleting = false
-                    } catch (e: RecoverableSecurityException) {
-                        deletePending = target
+                        pendingBatch = listOf(item)
                         systemDeleteLauncher.launch(
                             IntentSenderRequest.Builder(
-                                e.userAction.actionIntent.intentSender,
+                                failure.userAction.actionIntent.intentSender,
                             ).build(),
                         )
+                    } catch (_: Exception) {
+                        failedCount++
+                        deleteQueue = deleteQueue.drop(1)
+                        processNext()
                     }
+                } else {
+                    if ((outcome.getOrNull() ?: 0) > 0) {
+                        removeDeletedMedia(listOf(item))
+                        deletedCount++
+                    } else {
+                        failedCount++
+                    }
+                    approvedLegacyUri = null
+                    deleteQueue = deleteQueue.drop(1)
+                    processNext()
                 }
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                ) != PackageManager.PERMISSION_GRANTED -> {
-                    deletePending = target
-                    legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                }
-                else -> directlyDeleteMedia(target)
             }
-        } catch (_: Exception) {
-            deletePending = null
-            deleting = false
-            deleteError = "無法啟動刪除流程，請稍後再試。"
+        }
+    }
+
+    fun beginDeletion(items: List<LocalMedia>) {
+        if (deleting) return
+        val unique = BatchDeletePolicy.unique(items) { it.uri.toString() }
+        if (unique.isEmpty()) return
+        deleting = true
+        deleteError = null
+        deletedCount = 0
+        failedCount = 0
+        cancelledDeletion = false
+        currentChunkLimit = BatchDeletePolicy.MAX_REQUEST_ITEMS
+        approvedLegacyUri = null
+        deleteQueue = unique
+        processNext()
+    }
+
+    fun requestDeletion(items: List<LocalMedia>) {
+        if (items.isEmpty() || deleting) return
+        val granted = Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context)
+        canManageMedia = granted
+        if (BatchDeletePolicy.needsAppConfirmation(Build.VERSION.SDK_INT, granted)) {
+            deleteConfirmation = items
+        } else {
+            beginDeletion(items)
         }
     }
 
@@ -276,7 +388,14 @@ private fun MyPlayerApp() {
 
     DisposableEffect(activity) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refresh++
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                canManageMedia = Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context)
+                refresh++
+            }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+                saveScroll()
+                saveBrowser()
+            }
         }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
@@ -327,7 +446,7 @@ private fun MyPlayerApp() {
                 total = viewerList.size,
                 loader = loader,
                 onBack = { closeViewer() },
-                onDelete = { deleteConfirmation = viewerList[viewerIndex] },
+                onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
                 },
@@ -344,29 +463,93 @@ private fun MyPlayerApp() {
             returnToMediaUri = pendingReturnUri,
             onReturnPositionHandled = { pendingReturnUri = null },
             folders = folderRows,
+            selectionMode = selectionMode,
+            selectedUris = selectedUris,
+            deleting = deleting,
+            onLongSelect = { media ->
+                if (!deleting) {
+                    selectionMode = true
+                    selectedUris = selectedUris + media.uri.toString()
+                }
+            },
+            onToggleSelection = { media ->
+                if (!deleting) {
+                    val id = media.uri.toString()
+                    selectedUris = if (id in selectedUris) selectedUris - id else selectedUris + id
+                }
+            },
+            onExitSelection = { selectionMode = false; selectedUris = emptySet() },
+            onSelectAll = { selectedUris = visible.mapTo(mutableSetOf()) { it.uri.toString() } },
+            onDeleteSelected = {
+                requestDeletion(visible.filter { it.uri.toString() in selectedUris })
+            },
+            canManageMedia = canManageMedia,
+            onMediaManagementInfo = { mediaManageInfo = true },
             browserMode = browserMode,
             currentFolderKey = currentFolderKey,
             favoriteFolders = favoriteFolders,
             onBrowserModeChange = { selected ->
-                browserMode = selected
-                currentFolderKey = null
+                if (browserMode != selected) {
+                    saveScroll()
+                    browserMode = selected
+                    currentFolderKey = null
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
             },
             onFolderChange = { key ->
-                browserMode = BrowserMode.FOLDERS
-                currentFolderKey = key
+                if (browserMode != BrowserMode.FOLDERS || currentFolderKey != key) {
+                    saveScroll()
+                    browserMode = BrowserMode.FOLDERS
+                    currentFolderKey = key
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
             },
             onToggleFavorite = ::toggleFavorite,
             loading = loading,
             hasPermission = MediaLibrary.hasAccess(context),
             loader = loader,
             filter = filter,
-            onFilter = { filter = it },
+            onFilter = {
+                if (filter != it) {
+                    filter = it
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
+            },
             sort = sort,
-            onSort = { sort = it },
+            onSort = {
+                if (sort != it) {
+                    sort = it
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
+            },
             ascending = ascending,
-            onReverse = { ascending = !ascending },
+            onReverse = {
+                ascending = !ascending
+                scope.launch {
+                    galleryListState.scrollToItem(0)
+                    galleryGridState.scrollToItem(0)
+                }
+            },
             query = query,
-            onQuery = { query = it },
+            onQuery = { newQuery ->
+                query = newQuery
+                scope.launch {
+                    galleryListState.scrollToItem(0)
+                    galleryGridState.scrollToItem(0)
+                }
+            },
             searchExpanded = searchExpanded,
             onSearchToggle = {
                 searchExpanded = !searchExpanded
@@ -377,6 +560,7 @@ private fun MyPlayerApp() {
             onRefresh = { refresh++ },
             onPermission = { permissionLauncher.launch(MediaLibrary.requestedPermissions()) },
             onOpen = { index ->
+                saveScroll()
                 openedMediaUri = visible.getOrNull(index)?.uri?.toString()
                 pendingReturnUri = null
                 viewerItems = visible.toList()
@@ -384,13 +568,17 @@ private fun MyPlayerApp() {
             },
         )
     }
-    deleteConfirmation?.let { target ->
+    deleteConfirmation?.let { targets ->
         AlertDialog(
             onDismissRequest = { if (!deleting) deleteConfirmation = null },
-            title = { Text("刪除此${if (target.isVideo) "影片" else "圖片"}？") },
+            title = { Text("確認刪除 " + targets.size + " 個檔案？") },
             text = {
                 Text(
-                    "確定要從手機刪除「${target.name}」嗎？此操作會刪除原始檔案，無法在播放器內復原。",
+                    if (targets.size == 1) {
+                        "確定從手機刪除「" + targets.first().name + "」？原始檔案將永久刪除。"
+                    } else {
+                        "確定永久刪除選取的 " + targets.size + " 個圖片或影片？此操作不可復原。"
+                    },
                 )
             },
             confirmButton = {
@@ -398,15 +586,52 @@ private fun MyPlayerApp() {
                     enabled = !deleting,
                     onClick = {
                         deleteConfirmation = null
-                        requestMediaDeletion(target)
+                        beginDeletion(targets)
                     },
                 ) { Text("刪除", color = Color(0xFFFF8792)) }
             },
             dismissButton = {
-                TextButton(
-                    enabled = !deleting,
-                    onClick = { deleteConfirmation = null },
-                ) { Text("取消") }
+                TextButton(enabled = !deleting, onClick = { deleteConfirmation = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+    if (mediaManageInfo) {
+        AlertDialog(
+            onDismissRequest = { mediaManageInfo = false },
+            title = { Text("媒體管理權限") },
+            text = {
+                Text(
+                    if (canManageMedia) {
+                        "已允許媒體管理。刪除檔案時，App 只會確認一次，不再逐次顯示 Android 系統確認。"
+                    } else {
+                        "可選擇授予 Android「媒體管理」特殊權限，之後在 App 確認一次即可批次刪除。未授予時仍可使用 Android 系統的刪除確認視窗。"
+                    },
+                )
+            },
+            confirmButton = {
+                if (!canManageMedia && Build.VERSION.SDK_INT >= 31) {
+                    TextButton(onClick = {
+                        mediaManageInfo = false
+                        try {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA).apply {
+                                    data = Uri.parse("package:" + context.packageName)
+                                },
+                            )
+                        } catch (_: Exception) {
+                            deleteError = "無法開啟媒體管理權限設定。"
+                        }
+                    }) { Text("前往授權設定") }
+                } else {
+                    TextButton(onClick = { mediaManageInfo = false }) { Text("完成") }
+                }
+            },
+            dismissButton = {
+                if (!canManageMedia) TextButton(onClick = { mediaManageInfo = false }) {
+                    Text("稍後再說")
+                }
             },
         )
     }
@@ -431,6 +656,16 @@ private fun GalleryScreen(
     returnToMediaUri: String?,
     onReturnPositionHandled: () -> Unit,
     folders: List<MediaFolder>,
+    selectionMode: Boolean,
+    selectedUris: Set<String>,
+    deleting: Boolean,
+    onLongSelect: (LocalMedia) -> Unit,
+    onToggleSelection: (LocalMedia) -> Unit,
+    onExitSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    canManageMedia: Boolean,
+    onMediaManagementInfo: () -> Unit,
     browserMode: BrowserMode,
     currentFolderKey: String?,
     favoriteFolders: Set<String>,
@@ -456,12 +691,20 @@ private fun GalleryScreen(
     onPermission: () -> Unit,
     onOpen: (Int) -> Unit,
 ) {
-    BackHandler(enabled = browserMode != BrowserMode.ALL) {
-        if (browserMode == BrowserMode.FOLDERS && currentFolderKey != null) {
+    BackHandler(enabled = selectionMode || browserMode != BrowserMode.ALL) {
+        if (selectionMode) onExitSelection()
+        else if (browserMode == BrowserMode.FOLDERS && currentFolderKey != null) {
             onFolderChange(MediaFolders.parentKey(currentFolderKey))
         } else {
             onBrowserModeChange(BrowserMode.ALL)
         }
+    }
+    fun tapItem(index: Int) {
+        val item = visible.getOrNull(index) ?: return
+        if (selectionMode) onToggleSelection(item) else onOpen(index)
+    }
+    fun longTapItem(index: Int) {
+        visible.getOrNull(index)?.let(onLongSelect)
     }
     val photoCount = remember(allMedia) { allMedia.count { !it.isVideo } }
     val videoCount = remember(allMedia) { allMedia.count { it.isVideo } }
@@ -525,6 +768,47 @@ private fun GalleryScreen(
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
+                }
+                if (Build.VERSION.SDK_INT >= 31) {
+                    IconButton(onClick = onMediaManagementInfo) {
+                        Icon(
+                            Icons.Default.AdminPanelSettings,
+                            "設定媒體管理權限",
+                            tint = if (canManageMedia) Mint else Subtle,
+                        )
+                    }
+                }
+            }
+            if (selectionMode) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth()
+                        .background(Panel, RoundedCornerShape(14.dp))
+                        .padding(start = 9.dp, end = 3.dp, top = 3.dp, bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "已選 " + selectedUris.size + " 個",
+                        modifier = Modifier.weight(1f),
+                        color = Mint,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(enabled = !deleting && visible.isNotEmpty(), onClick = onSelectAll) {
+                        Text("全選")
+                    }
+                    IconButton(enabled = !deleting, onClick = onExitSelection) {
+                        Icon(Icons.Default.Close, "取消多選", tint = Subtle)
+                    }
+                    Button(
+                        enabled = !deleting && selectedUris.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        onClick = onDeleteSelected,
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(if (deleting) "刪除中" else "刪除")
+                    }
                 }
             }
 
@@ -704,12 +988,22 @@ private fun GalleryScreen(
                             items = group.entries,
                             key = { "${it.value.isVideo}-${it.value.id}" },
                         ) { entry ->
-                            MediaListItem(entry.value, loader) { onOpen(entry.index) }
+                            MediaListItem(
+                                entry.value, loader,
+                                selected = entry.value.uri.toString() in selectedUris,
+                                onClick = { tapItem(entry.index) },
+                                onLongClick = { longTapItem(entry.index) },
+                            )
                         }
                     }
                 } else {
                     itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                        MediaListItem(item, loader) { onOpen(index) }
+                        MediaListItem(
+                            item, loader,
+                            selected = item.uri.toString() in selectedUris,
+                            onClick = { tapItem(index) },
+                            onLongClick = { longTapItem(index) },
+                        )
                     }
                 }
             }
@@ -742,12 +1036,22 @@ private fun GalleryScreen(
                             items = group.entries,
                             key = { "${it.value.isVideo}-${it.value.id}" },
                         ) { entry ->
-                            MediaGridItem(entry.value, loader) { onOpen(entry.index) }
+                            MediaGridItem(
+                                entry.value, loader,
+                                selected = entry.value.uri.toString() in selectedUris,
+                                onClick = { tapItem(entry.index) },
+                                onLongClick = { longTapItem(entry.index) },
+                            )
                         }
                     }
                 } else {
                     itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                        MediaGridItem(item, loader) { onOpen(index) }
+                        MediaGridItem(
+                            item, loader,
+                            selected = item.uri.toString() in selectedUris,
+                            onClick = { tapItem(index) },
+                            onLongClick = { longTapItem(index) },
+                        )
                     }
                 }
             }
@@ -940,50 +1244,78 @@ private fun Thumb(media: LocalMedia, loader: ImageLoader, modifier: Modifier = M
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaGridItem(media: LocalMedia, loader: ImageLoader, onClick: () -> Unit) {
+private fun MediaGridItem(
+    media: LocalMedia,
+    loader: ImageLoader,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .background(Panel, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick),
+            .border(2.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(14.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
-        Thumb(
-            media, loader,
-            Modifier.fillMaxWidth().aspectRatio(1f),
-        )
+        Box {
+            Thumb(media, loader, Modifier.fillMaxWidth().aspectRatio(1f))
+            if (selected) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    "已選取",
+                    tint = Mint,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .background(Panel, CircleShape)
+                        .size(25.dp),
+                )
+            }
+        }
         Text(
-            media.name,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
+            media.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall, color = Color.White,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaListItem(media: LocalMedia, loader: ImageLoader, onClick: () -> Unit) {
+private fun MediaListItem(
+    media: LocalMedia,
+    loader: ImageLoader,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth()
-            .background(Panel, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .background(if (selected) Accent.copy(alpha = .2f) else Panel, RoundedCornerShape(14.dp))
+            .border(2.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(14.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Thumb(media, loader, Modifier.size(84.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(media.name, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Text(media.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(5.dp))
             Text(
-                "${dateLabel(media.createdAtMs)}  ·  ${MediaLibrary.readableSize(media.bytes)}",
-                color = Subtle,
-                style = MaterialTheme.typography.labelMedium,
+                dateLabel(media.createdAtMs) + " · " + MediaLibrary.readableSize(media.bytes),
+                color = Subtle, style = MaterialTheme.typography.labelMedium,
             )
-            Text(if (media.isVideo) "影片" else "圖片", color = Mint, style = MaterialTheme.typography.labelSmall)
+            Text(if (media.isVideo) "影片" else "圖片",
+                color = Mint, style = MaterialTheme.typography.labelSmall)
         }
-        Icon(Icons.Default.ChevronRight, null, tint = Subtle)
+        Icon(
+            if (selected) Icons.Default.CheckCircle else Icons.Default.ChevronRight,
+            if (selected) "已選取" else null,
+            tint = if (selected) Mint else Subtle,
+        )
     }
 }
 
