@@ -22,6 +22,9 @@ import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -73,6 +76,9 @@ fun ViewerScreen(
     controlsAutoHideSeconds: Int,
     showPlayButton: Boolean,
     showPreviousNextButtons: Boolean,
+    volumeSettings: PlaybackVolumeSettings,
+    onVolumeChange: (Float) -> Unit,
+    onToggleMute: () -> Unit,
     hasPreviousVideo: Boolean,
     hasNextVideo: Boolean,
     onPreviousVideo: () -> Unit,
@@ -109,6 +115,11 @@ fun ViewerScreen(
             // keyframe. Nearest keyframe trades small time error for fast resume.
             .setSeekParameters(SeekParameters.CLOSEST_SYNC)
             .build() else null
+    }
+    // Apply immediately to each newly created ExoPlayer (also on decoder retry).
+    // Device/system volume stays untouched.
+    LaunchedEffect(player, volumeSettings.effectiveVolume) {
+        player?.volume = volumeSettings.effectiveVolume
     }
     DisposableEffect(player, media.uri) {
         val listener = object : Player.Listener {
@@ -612,6 +623,13 @@ fun ViewerScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White,
                             )
+                            PlaybackVolumeControl(
+                                settings = volumeSettings,
+                                onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
+                                onToggleMute = { notifyInteraction(); onToggleMute() },
+                                modifier = Modifier.width(144.dp),
+                                compact = true,
+                            )
                         }
                     } else {
                         VideoProgressSlider(
@@ -631,6 +649,12 @@ fun ViewerScreen(
                             Spacer(Modifier.weight(1f))
                             Text(durationLabel(totalDuration), style = MaterialTheme.typography.labelMedium)
                         }
+                        PlaybackVolumeControl(
+                            settings = volumeSettings,
+                            onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
+                            onToggleMute = { notifyInteraction(); onToggleMute() },
+                            modifier = Modifier.fillMaxWidth(0.78f),
+                        )
                         if (showPlayButton || showPreviousNextButtons) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -686,6 +710,61 @@ fun ViewerScreen(
                         color = Color(0xFFB8C5DD), style = MaterialTheme.typography.labelSmall)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Small always-available volume slider and one-tap mute. Landscape keeps it
+ * in the seek row to avoid adding another toolbar over the full-screen video.
+ */
+@Composable
+private fun PlaybackVolumeControl(
+    settings: PlaybackVolumeSettings,
+    onVolumeChange: (Float) -> Unit,
+    onToggleMute: () -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val muted = settings.effectiveVolume <= 0f
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IconButton(
+            onClick = onToggleMute,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(
+                imageVector = when {
+                    muted -> Icons.Default.VolumeOff
+                    settings.effectiveVolume < 0.5f -> Icons.Default.VolumeDown
+                    else -> Icons.Default.VolumeUp
+                },
+                contentDescription = if (muted) "取消靜音" else "立即靜音",
+                tint = if (muted) Color(0xFF92A9FF) else Color.White,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Slider(
+            value = settings.effectiveVolume,
+            onValueChange = onVolumeChange,
+            valueRange = 0f..1f,
+            modifier = Modifier.weight(1f).height(36.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF92A9FF),
+                activeTrackColor = Color(0xFF92A9FF),
+                inactiveTrackColor = Color.White.copy(alpha = .3f),
+            ),
+        )
+        if (!compact) {
+            Text(
+                "${(settings.effectiveVolume * 100).toInt()}%",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.width(36.dp),
+            )
         }
     }
 }
