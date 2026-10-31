@@ -25,10 +25,11 @@ data class LocalMedia(
     val durationMs: Long = 0L,
     val folderPath: String = "",
     val volumeName: String = "external_primary",
+    val modifiedAtMs: Long = createdAtMs,
 )
 
 enum class MediaFilter { ALL, PHOTOS, VIDEOS }
-enum class MediaSort { CREATED, SIZE }
+enum class MediaSort { MODIFIED, CREATED, SIZE }
 
 // An IndexedValue preserves the media's position in the *sorted* collection.
 // Group headings are not part of that collection or the viewer swipe sequence.
@@ -46,10 +47,20 @@ object MediaLibrary {
         return Instant.ofEpochMilli(timestampMs).atZone(zone).toLocalDate().toString()
     }
 
-    fun groupByCreatedDay(sortedMedia: List<LocalMedia>): List<MediaDayGroup> {
+    fun groupByCreatedDay(sortedMedia: List<LocalMedia>): List<MediaDayGroup> =
+        groupByDay(sortedMedia, MediaSort.CREATED)
+
+    fun sortTimestamp(media: LocalMedia, sort: MediaSort): Long = when (sort) {
+        MediaSort.MODIFIED -> media.modifiedAtMs
+        MediaSort.CREATED -> media.createdAtMs
+        MediaSort.SIZE -> 0L
+    }
+
+    fun groupByDay(sortedMedia: List<LocalMedia>, sort: MediaSort): List<MediaDayGroup> {
+        if (sort == MediaSort.SIZE) return emptyList()
         val zone = ZoneId.systemDefault()
         return sortedMedia.withIndex()
-            .groupBy { createdDayKey(it.value.createdAtMs, zone) }
+            .groupBy { createdDayKey(sortTimestamp(it.value, sort), zone) }
             .map { (key, entries) ->
                 MediaDayGroup(
                     key = key,
@@ -106,6 +117,7 @@ object MediaLibrary {
             add(MediaStore.MediaColumns.DISPLAY_NAME)
             add(MediaStore.MediaColumns.SIZE)
             add(MediaStore.MediaColumns.DATE_ADDED)
+            add(MediaStore.MediaColumns.DATE_MODIFIED)
             add(dateTaken)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(MediaStore.MediaColumns.RELATIVE_PATH)
@@ -127,6 +139,7 @@ object MediaLibrary {
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
             val addedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            val modifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
             val takenColumn = cursor.getColumnIndex(dateTaken)
             val durationColumn = if (video) cursor.getColumnIndex(MediaStore.Video.Media.DURATION) else -1
             val folderColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
@@ -138,6 +151,8 @@ object MediaLibrary {
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
                 val added = if (cursor.isNull(addedColumn)) 0L else cursor.getLong(addedColumn) * 1000
+                val modified = if (cursor.isNull(modifiedColumn)) 0L
+                    else cursor.getLong(modifiedColumn) * 1000L
                 val taken = if (takenColumn < 0 || cursor.isNull(takenColumn)) 0L
                             else cursor.getLong(takenColumn)
                 val size = if (cursor.isNull(sizeColumn)) 0L else cursor.getLong(sizeColumn)
@@ -160,6 +175,7 @@ object MediaLibrary {
                     isVideo = video,
                     bytes = size,
                     createdAtMs = if (taken > 0) taken else added,
+                    modifiedAtMs = modified,
                     durationMs = duration,
                     folderPath = folderPath,
                     volumeName = volumeName,
@@ -203,6 +219,7 @@ object MediaLibrary {
             } && it.name.contains(query.trim(), ignoreCase = true)
         }.toList()
         val comparison = when (sort) {
+            MediaSort.MODIFIED -> compareBy<LocalMedia> { it.modifiedAtMs }
             MediaSort.CREATED -> compareBy<LocalMedia> { it.createdAtMs }
             MediaSort.SIZE -> compareBy<LocalMedia> { it.bytes }
         }.thenBy { it.id }
