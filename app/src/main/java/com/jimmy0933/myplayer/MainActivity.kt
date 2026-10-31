@@ -3,6 +3,7 @@ package com.jimmy0933.myplayer
 import android.Manifest
 import android.app.Activity
 import android.app.RecoverableSecurityException
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -104,6 +105,20 @@ private fun MyPlayerApp() {
     var deletePending by remember { mutableStateOf<LocalMedia?>(null) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
+
+    // Let the sensor rotate the viewer even when Android auto-rotate is disabled.
+    // Keep the media library upright; Compose and ExoPlayer survive orientation
+    // changes because the activity handles orientation/screenSize config changes.
+    val requestedScreenOrientation = if (viewerItems != null) {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR
+    } else {
+        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+    SideEffect {
+        if (activity.requestedOrientation != requestedScreenOrientation) {
+            activity.requestedOrientation = requestedScreenOrientation
+        }
+    }
 
     fun removeDeletedMedia(target: LocalMedia) {
         allMedia = allMedia.filterNot { it.uri == target.uri }
