@@ -234,8 +234,8 @@ private fun MyPlayerApp() {
             }
             if (failedCount > 0 || cancelledDeletion) {
                 deleteError = "已刪除 " + deletedCount + " 個。" +
-                    if (failedCount > 0) "失敗 " + failedCount + " 個。" else "" +
-                    if (cancelledDeletion) "已取消剩餘檔案，未刪除的仍保留。" else ""
+                    (if (failedCount > 0) "失敗 " + failedCount + " 個。" else "") +
+                    (if (cancelledDeletion) "已取消剩餘檔案，未刪除的仍保留。" else "")
             }
             refresh++
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -256,7 +256,7 @@ private fun MyPlayerApp() {
                     failedCount++
                     deleteQueue = deleteQueue.drop(1)
                 }
-                processNext()
+                scope.launch { processNext() }
             }
         } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(
@@ -385,7 +385,7 @@ private fun MyPlayerApp() {
                 total = viewerList.size,
                 loader = loader,
                 onBack = { closeViewer() },
-                onDelete = { deleteConfirmation = viewerList[viewerIndex] },
+                onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
                 },
@@ -402,6 +402,28 @@ private fun MyPlayerApp() {
             returnToMediaUri = pendingReturnUri,
             onReturnPositionHandled = { pendingReturnUri = null },
             folders = folderRows,
+            selectionMode = selectionMode,
+            selectedUris = selectedUris,
+            deleting = deleting,
+            onLongSelect = { media ->
+                if (!deleting) {
+                    selectionMode = true
+                    selectedUris = selectedUris + media.uri.toString()
+                }
+            },
+            onToggleSelection = { media ->
+                if (!deleting) {
+                    val id = media.uri.toString()
+                    selectedUris = if (id in selectedUris) selectedUris - id else selectedUris + id
+                }
+            },
+            onExitSelection = { selectionMode = false; selectedUris = emptySet() },
+            onSelectAll = { selectedUris = visible.mapTo(mutableSetOf()) { it.uri.toString() } },
+            onDeleteSelected = {
+                requestDeletion(visible.filter { it.uri.toString() in selectedUris })
+            },
+            canManageMedia = canManageMedia,
+            onMediaManagementInfo = { mediaManageInfo = true },
             browserMode = browserMode,
             currentFolderKey = currentFolderKey,
             favoriteFolders = favoriteFolders,
@@ -442,13 +464,17 @@ private fun MyPlayerApp() {
             },
         )
     }
-    deleteConfirmation?.let { target ->
+    deleteConfirmation?.let { targets ->
         AlertDialog(
             onDismissRequest = { if (!deleting) deleteConfirmation = null },
-            title = { Text("刪除此${if (target.isVideo) "影片" else "圖片"}？") },
+            title = { Text("確認刪除 " + targets.size + " 個檔案？") },
             text = {
                 Text(
-                    "確定要從手機刪除「${target.name}」嗎？此操作會刪除原始檔案，無法在播放器內復原。",
+                    if (targets.size == 1) {
+                        "確定從手機刪除「" + targets.first().name + "」？原始檔案將永久刪除。"
+                    } else {
+                        "確定永久刪除選取的 " + targets.size + " 個圖片或影片？此操作不可復原。"
+                    },
                 )
             },
             confirmButton = {
@@ -456,15 +482,52 @@ private fun MyPlayerApp() {
                     enabled = !deleting,
                     onClick = {
                         deleteConfirmation = null
-                        requestMediaDeletion(target)
+                        beginDeletion(targets)
                     },
                 ) { Text("刪除", color = Color(0xFFFF8792)) }
             },
             dismissButton = {
-                TextButton(
-                    enabled = !deleting,
-                    onClick = { deleteConfirmation = null },
-                ) { Text("取消") }
+                TextButton(enabled = !deleting, onClick = { deleteConfirmation = null }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+    if (mediaManageInfo) {
+        AlertDialog(
+            onDismissRequest = { mediaManageInfo = false },
+            title = { Text("媒體管理權限") },
+            text = {
+                Text(
+                    if (canManageMedia) {
+                        "已允許媒體管理。刪除檔案時，App 只會確認一次，不再逐次顯示 Android 系統確認。"
+                    } else {
+                        "可選擇授予 Android「媒體管理」特殊權限，之後在 App 確認一次即可批次刪除。未授予時仍可使用 Android 系統的刪除確認視窗。"
+                    },
+                )
+            },
+            confirmButton = {
+                if (!canManageMedia && Build.VERSION.SDK_INT >= 31) {
+                    TextButton(onClick = {
+                        mediaManageInfo = false
+                        try {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA).apply {
+                                    data = Uri.parse("package:" + context.packageName)
+                                },
+                            )
+                        } catch (_: Exception) {
+                            deleteError = "無法開啟媒體管理權限設定。"
+                        }
+                    }) { Text("前往授權設定") }
+                } else {
+                    TextButton(onClick = { mediaManageInfo = false }) { Text("完成") }
+                }
+            },
+            dismissButton = {
+                if (!canManageMedia) TextButton(onClick = { mediaManageInfo = false }) {
+                    Text("稍後再說")
+                }
             },
         )
     }
