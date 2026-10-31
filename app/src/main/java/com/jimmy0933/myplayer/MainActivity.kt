@@ -58,6 +58,8 @@ private val Accent = Color(0xFF91A9FF)
 private val Mint = Color(0xFF86E6CB)
 private val Subtle = Color(0xFFAAB8D2)
 
+private enum class BrowserMode { ALL, FOLDERS, FAVORITES }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,6 +101,21 @@ private fun MyPlayerApp() {
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var listMode by remember { mutableStateOf(false) }
+    var browserMode by remember { mutableStateOf(BrowserMode.ALL) }
+    var currentFolderKey by remember { mutableStateOf<String?>(null) }
+    val favoritePrefs = remember(context) {
+        context.getSharedPreferences("my_player_folders", android.content.Context.MODE_PRIVATE)
+    }
+    var favoriteFolders by remember {
+        mutableStateOf(favoritePrefs.getStringSet("favorite_folders", emptySet<String>())
+            .orEmpty().toSet())
+    }
+    val folders = remember(allMedia) { MediaFolders.index(allMedia) }
+    fun toggleFavorite(key: String) {
+        val next = if (key in favoriteFolders) favoriteFolders - key else favoriteFolders + key
+        favoriteFolders = next
+        favoritePrefs.edit().putStringSet("favorite_folders", next).apply()
+    }
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
     var deleteConfirmation by remember { mutableStateOf<LocalMedia?>(null) }
@@ -251,8 +268,29 @@ private fun MyPlayerApp() {
         allMedia = if (MediaLibrary.hasAccess(context)) MediaLibrary.scan(context) else emptyList()
         loading = false
     }
-    val visible = remember(allMedia, filter, sort, ascending, query) {
-        MediaLibrary.sorted(allMedia, filter, sort, ascending, query)
+    val visible = remember(allMedia, filter, sort, ascending, query, browserMode, currentFolderKey) {
+        val sorted = MediaLibrary.sorted(allMedia, filter, sort, ascending, query)
+        when (browserMode) {
+            BrowserMode.ALL -> sorted
+            BrowserMode.FOLDERS -> currentFolderKey?.let { MediaFolders.directMedia(sorted, it) }
+                ?: emptyList()
+            BrowserMode.FAVORITES -> emptyList()
+        }
+    }
+    val folderRows = remember(folders, favoriteFolders, browserMode, currentFolderKey) {
+        when (browserMode) {
+            BrowserMode.ALL -> emptyList()
+            BrowserMode.FOLDERS -> MediaFolders.children(folders, currentFolderKey)
+            BrowserMode.FAVORITES -> favoriteFolders.map {
+                folders[it] ?: MediaFolders.unavailableFavorite(it)
+            }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        }
+    }
+    LaunchedEffect(folders, browserMode, currentFolderKey, loading) {
+        if (!loading && browserMode == BrowserMode.FOLDERS &&
+            currentFolderKey != null && currentFolderKey !in folders) {
+            currentFolderKey = MediaFolders.parentKey(currentFolderKey!!)
+        }
     }
 
     if (viewerItems != null) {
@@ -277,6 +315,19 @@ private fun MyPlayerApp() {
         GalleryScreen(
             allMedia = allMedia,
             visible = visible,
+            folders = folderRows,
+            browserMode = browserMode,
+            currentFolderKey = currentFolderKey,
+            favoriteFolders = favoriteFolders,
+            onBrowserModeChange = { selected ->
+                browserMode = selected
+                currentFolderKey = null
+            },
+            onFolderChange = { key ->
+                browserMode = BrowserMode.FOLDERS
+                currentFolderKey = key
+            },
+            onToggleFavorite = ::toggleFavorite,
             loading = loading,
             hasPermission = MediaLibrary.hasAccess(context),
             loader = loader,
@@ -345,6 +396,13 @@ private fun MyPlayerApp() {
 private fun GalleryScreen(
     allMedia: List<LocalMedia>,
     visible: List<LocalMedia>,
+    folders: List<MediaFolder>,
+    browserMode: BrowserMode,
+    currentFolderKey: String?,
+    favoriteFolders: Set<String>,
+    onBrowserModeChange: (BrowserMode) -> Unit,
+    onFolderChange: (String?) -> Unit,
+    onToggleFavorite: (String) -> Unit,
     loading: Boolean,
     hasPermission: Boolean,
     loader: ImageLoader,
@@ -364,6 +422,13 @@ private fun GalleryScreen(
     onPermission: () -> Unit,
     onOpen: (Int) -> Unit,
 ) {
+    BackHandler(enabled = browserMode != BrowserMode.ALL) {
+        if (browserMode == BrowserMode.FOLDERS && currentFolderKey != null) {
+            onFolderChange(MediaFolders.parentKey(currentFolderKey))
+        } else {
+            onBrowserModeChange(BrowserMode.ALL)
+        }
+    }
     val photoCount = remember(allMedia) { allMedia.count { !it.isVideo } }
     val videoCount = remember(allMedia) { allMedia.count { it.isVideo } }
     // Only chronological sorting displays date sections. Keep the original
@@ -433,6 +498,50 @@ private fun GalleryScreen(
                 MetricChip("影片", videoCount.toString(), Icons.Default.Movie, Modifier.weight(1f))
             }
             Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                BrowserTab("全部影像", Icons.Default.PhotoLibrary, browserMode == BrowserMode.ALL) {
+                    onBrowserModeChange(BrowserMode.ALL)
+                }
+                BrowserTab("資料夾", Icons.Default.Folder, browserMode == BrowserMode.FOLDERS) {
+                    onBrowserModeChange(BrowserMode.FOLDERS)
+                }
+                BrowserTab("最愛", Icons.Default.Star, browserMode == BrowserMode.FAVORITES) {
+                    onBrowserModeChange(BrowserMode.FAVORITES)
+                }
+            }
+            if (browserMode == BrowserMode.FOLDERS) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        enabled = currentFolderKey != null,
+                        onClick = { onFolderChange(currentFolderKey?.let { MediaFolders.parentKey(it) }) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(Icons.Default.ArrowBack, "返回上一層", tint = if (currentFolderKey == null) Subtle else Accent)
+                    }
+                    Text(
+                        currentFolderKey?.let { MediaFolders.folderLabel(it) } ?: "手機目錄",
+                        modifier = Modifier.weight(1f),
+                        color = Mint,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    currentFolderKey?.let { folder ->
+                        IconButton(onClick = { onToggleFavorite(folder) }) {
+                            Icon(
+                                if (folder in favoriteFolders) Icons.Default.Star else Icons.Default.StarBorder,
+                                if (folder in favoriteFolders) "取消收藏此目錄" else "將此目錄加入最愛",
+                                tint = if (folder in favoriteFolders) Color(0xFFFFCD69) else Subtle,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(11.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterPill("全部", filter == MediaFilter.ALL) { onFilter(MediaFilter.ALL) }
@@ -442,13 +551,17 @@ private fun GalleryScreen(
             Spacer(Modifier.height(13.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "共 ${visible.size} 個項目",
+                    when (browserMode) {
+                        BrowserMode.ALL -> "共 ${visible.size} 個項目"
+                        BrowserMode.FOLDERS -> "${folders.size} 個資料夾 · ${visible.size} 個檔案"
+                        BrowserMode.FAVORITES -> "${folders.size} 個最愛資料夾"
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = Subtle,
                     modifier = Modifier.weight(1f),
                 )
                 var sortMenu by remember { mutableStateOf(false) }
-                Box {
+                if (browserMode != BrowserMode.FAVORITES) Box {
                     TextButton(onClick = { sortMenu = true }) {
                         Icon(if (sort == MediaSort.CREATED) Icons.Default.CalendarMonth else Icons.Default.Storage, null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(4.dp))
@@ -467,14 +580,14 @@ private fun GalleryScreen(
                         )
                     }
                 }
-                IconButton(onClick = onReverse, modifier = Modifier.size(38.dp)) {
+                if (browserMode != BrowserMode.FAVORITES) IconButton(onClick = onReverse, modifier = Modifier.size(38.dp)) {
                     Icon(
                         if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
                         if (ascending) "正排" else "倒排",
                         tint = Accent,
                     )
                 }
-                IconButton(onClick = onToggleMode, modifier = Modifier.size(38.dp)) {
+                if (browserMode != BrowserMode.FAVORITES) IconButton(onClick = onToggleMode, modifier = Modifier.size(38.dp)) {
                     Icon(
                         if (listMode) Icons.Default.GridView else Icons.Default.ViewList,
                         if (listMode) "切換網格" else "切換清單",
@@ -494,11 +607,20 @@ private fun GalleryScreen(
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Accent)
             }
-            visible.isEmpty() -> MessageState(
-                icon = Icons.Default.PhotoLibrary,
-                title = if (allMedia.isEmpty()) "目前沒有可讀取的媒體" else "找不到符合條件的檔案",
+            browserMode == BrowserMode.FAVORITES && folders.isEmpty() -> MessageState(
+                icon = Icons.Default.StarBorder,
+                title = "還沒有最愛資料夾",
+                description = "在資料夾旁點星星，就能把常用目錄收藏在這裡。",
+                action = "瀏覽資料夾",
+                onClick = { onBrowserModeChange(BrowserMode.FOLDERS) },
+            )
+            visible.isEmpty() && folders.isEmpty() -> MessageState(
+                icon = if (browserMode == BrowserMode.FOLDERS) Icons.Default.FolderOpen else Icons.Default.PhotoLibrary,
+                title = if (allMedia.isEmpty()) "目前沒有可讀取的媒體"
+                        else if (browserMode == BrowserMode.FOLDERS) "這個資料夾沒有可讀取的圖片或影片"
+                        else "找不到符合條件的檔案",
                 description = if (allMedia.isEmpty()) "你可以重新選取允許瀏覽的照片與影片。"
-                              else "試試其他篩選或搜尋條件。",
+                              else "試試其他篩選，或重新掃描手機媒體。",
                 action = if (allMedia.isEmpty()) "管理媒體權限" else "重新掃描",
                 onClick = if (allMedia.isEmpty()) onPermission else onRefresh,
             )
@@ -506,6 +628,15 @@ private fun GalleryScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                items(folders, key = { "folder-${it.key}" }) { folder ->
+                    FolderListItem(
+                        folder = folder,
+                        favorite = folder.key in favoriteFolders,
+                        loader = loader,
+                        onOpen = { if (folder.available) onFolderChange(folder.key) },
+                        onToggleFavorite = { onToggleFavorite(folder.key) },
+                    )
+                }
                 if (sort == MediaSort.CREATED) {
                     dateGroups.forEach { group ->
                         item(key = "date-${group.key}") {
@@ -530,6 +661,19 @@ private fun GalleryScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(15.dp),
             ) {
+                items(
+                    items = folders,
+                    key = { "folder-${it.key}" },
+                    span = { GridItemSpan(maxLineSpan) },
+                ) { folder ->
+                    FolderListItem(
+                        folder = folder,
+                        favorite = folder.key in favoriteFolders,
+                        loader = loader,
+                        onOpen = { if (folder.available) onFolderChange(folder.key) },
+                        onToggleFavorite = { onToggleFavorite(folder.key) },
+                    )
+                }
                 if (sort == MediaSort.CREATED) {
                     dateGroups.forEach { group ->
                         item(key = "date-${group.key}", span = { GridItemSpan(maxLineSpan) }) {
@@ -548,6 +692,91 @@ private fun GalleryScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun BrowserTab(
+    title: String,
+    image: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .background(if (selected) Accent.copy(alpha = 0.22f) else Panel, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(image, null, tint = if (selected) Mint else Subtle, modifier = Modifier.size(17.dp))
+        Text(title, color = if (selected) Color.White else Subtle,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun FolderListItem(
+    folder: MediaFolder,
+    favorite: Boolean,
+    loader: ImageLoader,
+    onOpen: () -> Unit,
+    onToggleFavorite: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(Panel, RoundedCornerShape(15.dp))
+            .clickable(enabled = folder.available, onClick = onOpen)
+            .padding(start = 9.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(64.dp)
+                .background(Color(0xFF293A58), RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            folder.preview?.let { sample ->
+                Thumb(sample, loader, Modifier.fillMaxSize())
+            }
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                tint = Mint,
+                modifier = Modifier.align(Alignment.BottomEnd)
+                    .background(Color(0xDD162039), RoundedCornerShape(6.dp))
+                    .padding(3.dp).size(21.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(folder.name, color = Color.White, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (folder.available) "${folder.mediaCount} 個圖片／影片（含子目錄）"
+                else "暫時無法存取，仍可取消收藏",
+                color = Subtle, style = MaterialTheme.typography.labelSmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                MediaFolders.folderLabel(folder.key),
+                color = Mint.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onToggleFavorite) {
+            Icon(
+                if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                if (favorite) "取消收藏資料夾" else "收藏資料夾",
+                tint = if (favorite) Color(0xFFFFCD69) else Subtle,
+            )
+        }
+        if (folder.available) {
+            Icon(Icons.Default.ChevronRight, null, tint = Subtle, modifier = Modifier.size(18.dp))
         }
     }
 }
