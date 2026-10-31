@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 private fun MyPlayerApp() {
     val context = LocalContext.current
@@ -108,14 +109,29 @@ private fun MyPlayerApp() {
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
     var permissionAsked by remember { mutableStateOf(false) }
-    var filter by remember { mutableStateOf(MediaFilter.ALL) }
-    var sort by remember { mutableStateOf(MediaSort.CREATED) }
-    var ascending by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var searchExpanded by remember { mutableStateOf(false) }
-    var listMode by remember { mutableStateOf(false) }
-    var browserMode by remember { mutableStateOf(BrowserMode.ALL) }
-    var currentFolderKey by remember { mutableStateOf<String?>(null) }
+    val galleryPrefs = remember(context) {
+        context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
+    }
+    var filter by remember {
+        mutableStateOf(runCatching {
+            MediaFilter.valueOf(galleryPrefs.getString("filter", "ALL") ?: "ALL")
+        }.getOrDefault(MediaFilter.ALL))
+    }
+    var sort by remember {
+        mutableStateOf(runCatching {
+            MediaSort.valueOf(galleryPrefs.getString("sort", "CREATED") ?: "CREATED")
+        }.getOrDefault(MediaSort.CREATED))
+    }
+    var ascending by remember { mutableStateOf(galleryPrefs.getBoolean("ascending", false)) }
+    var query by remember { mutableStateOf(galleryPrefs.getString("query", "").orEmpty()) }
+    var searchExpanded by remember { mutableStateOf(query.isNotEmpty()) }
+    var listMode by remember { mutableStateOf(galleryPrefs.getBoolean("list_mode", false)) }
+    var browserMode by remember {
+        mutableStateOf(runCatching {
+            BrowserMode.valueOf(galleryPrefs.getString("browser", "ALL") ?: "ALL")
+        }.getOrDefault(BrowserMode.ALL))
+    }
+    var currentFolderKey by remember { mutableStateOf(galleryPrefs.getString("folder", null)) }
     val favoritePrefs = remember(context) {
         context.getSharedPreferences("my_player_folders", android.content.Context.MODE_PRIVATE)
     }
@@ -132,8 +148,46 @@ private fun MyPlayerApp() {
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
     // Retain the gallery viewport even while the fullscreen viewer is displayed.
-    val galleryListState = rememberLazyListState()
-    val galleryGridState = rememberLazyGridState()
+    val galleryListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = galleryPrefs.getInt("list_index", 0).coerceAtLeast(0),
+        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("list_offset", 0).coerceAtLeast(0),
+    )
+    val galleryGridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = galleryPrefs.getInt("grid_index", 0).coerceAtLeast(0),
+        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("grid_offset", 0).coerceAtLeast(0),
+    )
+    fun saveScroll() {
+        galleryPrefs.edit()
+            .putInt("list_index", galleryListState.firstVisibleItemIndex)
+            .putInt("list_offset", galleryListState.firstVisibleItemScrollOffset)
+            .putInt("grid_index", galleryGridState.firstVisibleItemIndex)
+            .putInt("grid_offset", galleryGridState.firstVisibleItemScrollOffset)
+            .apply()
+    }
+    fun saveBrowser() {
+        galleryPrefs.edit()
+            .putString("filter", filter.name)
+            .putString("sort", sort.name)
+            .putBoolean("ascending", ascending)
+            .putString("query", query)
+            .putBoolean("list_mode", listMode)
+            .putString("browser", browserMode.name)
+            .putString("folder", currentFolderKey)
+            .apply()
+    }
+    LaunchedEffect(filter, sort, ascending, query, listMode, browserMode, currentFolderKey) {
+        saveBrowser()
+    }
+    LaunchedEffect(galleryListState) {
+        snapshotFlow {
+            galleryListState.firstVisibleItemIndex to galleryListState.firstVisibleItemScrollOffset
+        }.debounce(350).collect { saveScroll() }
+    }
+    LaunchedEffect(galleryGridState) {
+        snapshotFlow {
+            galleryGridState.firstVisibleItemIndex to galleryGridState.firstVisibleItemScrollOffset
+        }.debounce(350).collect { saveScroll() }
+    }
     var openedMediaUri by remember { mutableStateOf<String?>(null) }
     var pendingReturnUri by remember { mutableStateOf<String?>(null) }
     fun closeViewer() {
@@ -335,6 +389,10 @@ private fun MyPlayerApp() {
                 canManageMedia = Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context)
                 refresh++
             }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+                saveScroll()
+                saveBrowser()
+            }
         }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
@@ -428,25 +486,67 @@ private fun MyPlayerApp() {
             currentFolderKey = currentFolderKey,
             favoriteFolders = favoriteFolders,
             onBrowserModeChange = { selected ->
-                browserMode = selected
-                currentFolderKey = null
+                if (browserMode != selected) {
+                    saveScroll()
+                    browserMode = selected
+                    currentFolderKey = null
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
             },
             onFolderChange = { key ->
-                browserMode = BrowserMode.FOLDERS
-                currentFolderKey = key
+                if (browserMode != BrowserMode.FOLDERS || currentFolderKey != key) {
+                    saveScroll()
+                    browserMode = BrowserMode.FOLDERS
+                    currentFolderKey = key
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
             },
             onToggleFavorite = ::toggleFavorite,
             loading = loading,
             hasPermission = MediaLibrary.hasAccess(context),
             loader = loader,
             filter = filter,
-            onFilter = { filter = it },
+            onFilter = {
+                if (filter != it) {
+                    filter = it
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
+            },
             sort = sort,
-            onSort = { sort = it },
+            onSort = {
+                if (sort != it) {
+                    sort = it
+                    scope.launch {
+                        galleryListState.scrollToItem(0)
+                        galleryGridState.scrollToItem(0)
+                    }
+                }
+            },
             ascending = ascending,
-            onReverse = { ascending = !ascending },
+            onReverse = {
+                ascending = !ascending
+                scope.launch {
+                    galleryListState.scrollToItem(0)
+                    galleryGridState.scrollToItem(0)
+                }
+            },
             query = query,
-            onQuery = { query = it },
+            onQuery = { newQuery ->
+                query = newQuery
+                scope.launch {
+                    galleryListState.scrollToItem(0)
+                    galleryGridState.scrollToItem(0)
+                }
+            },
             searchExpanded = searchExpanded,
             onSearchToggle = {
                 searchExpanded = !searchExpanded
@@ -457,6 +557,7 @@ private fun MyPlayerApp() {
             onRefresh = { refresh++ },
             onPermission = { permissionLauncher.launch(MediaLibrary.requestedPermissions()) },
             onOpen = { index ->
+                saveScroll()
                 openedMediaUri = visible.getOrNull(index)?.uri?.toString()
                 pendingReturnUri = null
                 viewerItems = visible.toList()
