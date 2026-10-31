@@ -737,6 +737,8 @@ private fun GalleryScreen(
         }
         onReturnPositionHandled()
     }
+    var detailsExpanded by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -746,85 +748,121 @@ private fun GalleryScreen(
                 ),
             ),
     ) {
-        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 19.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(42.dp).background(Accent.copy(alpha = .16f), RoundedCornerShape(13.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Default.SmartDisplay, contentDescription = null, tint = Accent)
-                }
-                Spacer(Modifier.width(12.dp))
+        // Keep the library visible: secondary controls and tall summary cards
+        // are collapsed by default instead of occupying most of the screen.
+        Column(
+            Modifier.fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text("MY PLAYER", style = MaterialTheme.typography.labelMedium, color = Mint, fontWeight = FontWeight.Bold)
-                    Text("我的影像庫", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "影像庫",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    Text(
+                        photoCount.toString() + " 張照片 · " + videoCount + " 支影片",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Subtle,
+                        maxLines = 1,
+                    )
                 }
-                IconButton(onClick = onSearchToggle) {
+                IconButton(
+                    onClick = onSearchToggle,
+                    modifier = Modifier.size(38.dp),
+                ) {
                     Icon(
                         if (searchExpanded) Icons.Default.Close else Icons.Default.Search,
                         if (searchExpanded) "收合搜尋" else "展開搜尋",
-                        tint = if (searchExpanded) Accent else Subtle,
+                        tint = if (searchExpanded) Mint else Subtle,
                     )
                 }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
+                IconButton(
+                    onClick = { detailsExpanded = !detailsExpanded },
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Icon(
+                        if (detailsExpanded) Icons.Default.ExpandLess else Icons.Default.Tune,
+                        if (detailsExpanded) "收合更多工具" else "展開更多工具",
+                        tint = if (detailsExpanded) Mint else Subtle,
+                    )
                 }
-                if (Build.VERSION.SDK_INT >= 31) {
-                    IconButton(onClick = onMediaManagementInfo) {
+                if (browserMode != BrowserMode.FAVORITES) {
+                    IconButton(onClick = onToggleMode, modifier = Modifier.size(38.dp)) {
                         Icon(
-                            Icons.Default.AdminPanelSettings,
-                            "設定媒體管理權限",
-                            tint = if (canManageMedia) Mint else Subtle,
+                            if (listMode) Icons.Default.GridView else Icons.Default.ViewList,
+                            if (listMode) "切換網格" else "切換清單",
+                            tint = Accent,
                         )
                     }
                 }
+                IconButton(onClick = onRefresh, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
+                }
             }
+
             if (selectionMode) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(5.dp))
                 Row(
                     Modifier.fillMaxWidth()
-                        .background(Panel, RoundedCornerShape(14.dp))
-                        .padding(start = 9.dp, end = 3.dp, top = 3.dp, bottom = 3.dp),
+                        .background(Panel, RoundedCornerShape(11.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         "已選 " + selectedUris.size + " 個",
                         modifier = Modifier.weight(1f),
                         color = Mint,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                     TextButton(enabled = !deleting && visible.isNotEmpty(), onClick = onSelectAll) {
                         Text("全選")
                     }
-                    IconButton(enabled = !deleting, onClick = onExitSelection) {
+                    IconButton(
+                        enabled = !deleting,
+                        onClick = onExitSelection,
+                        modifier = Modifier.size(34.dp),
+                    ) {
                         Icon(Icons.Default.Close, "取消多選", tint = Subtle)
                     }
-                    Button(
+                    TextButton(
                         enabled = !deleting && selectedUris.isNotEmpty(),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         onClick = onDeleteSelected,
                     ) {
-                        Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text(if (deleting) "刪除中" else "刪除")
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            null,
+                            tint = Color(0xFFFF9DA6),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(if (deleting) "刪除中" else "刪除", color = Color(0xFFFF9DA6))
                     }
                 }
             }
 
             if (searchExpanded) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(5.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQuery,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("搜尋照片或影片名稱", color = Subtle) },
+                    placeholder = { Text("搜尋圖片或影片", color = Subtle) },
                     leadingIcon = { Icon(Icons.Default.Search, null, tint = Subtle) },
                     trailingIcon = if (query.isNotEmpty()) {
-                        { IconButton(onClick = { onQuery("") }) { Icon(Icons.Default.Close, "清除搜尋文字") } }
+                        {
+                            IconButton(onClick = { onQuery("") }) {
+                                Icon(Icons.Default.Close, "清除搜尋文字")
+                            }
+                        }
                     } else null,
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = Panel.copy(alpha = .7f),
                         unfocusedContainerColor = Panel.copy(alpha = .7f),
@@ -833,108 +871,150 @@ private fun GalleryScreen(
                     ),
                 )
             }
-            Spacer(Modifier.height(17.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricChip("照片", photoCount.toString(), Icons.Default.Image, Modifier.weight(1f))
-                MetricChip("影片", videoCount.toString(), Icons.Default.Movie, Modifier.weight(1f))
+
+            if (detailsExpanded) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MetricChip(
+                        "照片", photoCount.toString(), Icons.Default.Image, Modifier.weight(1f),
+                    )
+                    MetricChip(
+                        "影片", videoCount.toString(), Icons.Default.Movie, Modifier.weight(1f),
+                    )
+                }
+                if (Build.VERSION.SDK_INT >= 31) {
+                    TextButton(onClick = onMediaManagementInfo) {
+                        Icon(
+                            Icons.Default.AdminPanelSettings,
+                            null,
+                            tint = if (canManageMedia) Mint else Subtle,
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (canManageMedia) "媒體管理：已授權" else "設定媒體管理權限",
+                            color = Subtle,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                BrowserTab("全部影像", Icons.Default.PhotoLibrary, browserMode == BrowserMode.ALL) {
-                    onBrowserModeChange(BrowserMode.ALL)
-                }
-                BrowserTab("資料夾", Icons.Default.Folder, browserMode == BrowserMode.FOLDERS) {
-                    onBrowserModeChange(BrowserMode.FOLDERS)
-                }
-                BrowserTab("最愛", Icons.Default.Star, browserMode == BrowserMode.FAVORITES) {
-                    onBrowserModeChange(BrowserMode.FAVORITES)
-                }
+
+            Spacer(Modifier.height(5.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BrowserTab(
+                    "全部影像", Icons.Default.PhotoLibrary, browserMode == BrowserMode.ALL,
+                ) { onBrowserModeChange(BrowserMode.ALL) }
+                BrowserTab(
+                    "資料夾", Icons.Default.Folder, browserMode == BrowserMode.FOLDERS,
+                ) { onBrowserModeChange(BrowserMode.FOLDERS) }
+                BrowserTab(
+                    "最愛", Icons.Default.Star, browserMode == BrowserMode.FAVORITES,
+                ) { onBrowserModeChange(BrowserMode.FAVORITES) }
             }
+
             if (browserMode == BrowserMode.FOLDERS) {
-                Spacer(Modifier.height(10.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(35.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(
                         enabled = currentFolderKey != null,
-                        onClick = { onFolderChange(currentFolderKey?.let { MediaFolders.parentKey(it) }) },
-                        modifier = Modifier.size(36.dp),
+                        onClick = {
+                            onFolderChange(currentFolderKey?.let { MediaFolders.parentKey(it) })
+                        },
+                        modifier = Modifier.size(34.dp),
                     ) {
-                        Icon(Icons.Default.ArrowBack, "返回上一層", tint = if (currentFolderKey == null) Subtle else Accent)
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            "返回上一層",
+                            tint = if (currentFolderKey == null) Subtle else Accent,
+                            modifier = Modifier.size(21.dp),
+                        )
                     }
                     Text(
                         currentFolderKey?.let { MediaFolders.folderLabel(it) } ?: "手機目錄",
                         modifier = Modifier.weight(1f),
                         color = Mint,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     currentFolderKey?.let { folder ->
-                        IconButton(onClick = { onToggleFavorite(folder) }) {
+                        IconButton(
+                            onClick = { onToggleFavorite(folder) },
+                            modifier = Modifier.size(34.dp),
+                        ) {
                             Icon(
-                                if (folder in favoriteFolders) Icons.Default.Star else Icons.Default.StarBorder,
-                                if (folder in favoriteFolders) "取消收藏此目錄" else "將此目錄加入最愛",
+                                if (folder in favoriteFolders) Icons.Default.Star
+                                else Icons.Default.StarBorder,
+                                if (folder in favoriteFolders) "取消收藏此目錄"
+                                else "將此目錄加入最愛",
                                 tint = if (folder in favoriteFolders) Color(0xFFFFCD69) else Subtle,
+                                modifier = Modifier.size(21.dp),
                             )
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(11.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterPill("全部", filter == MediaFilter.ALL) { onFilter(MediaFilter.ALL) }
-                FilterPill("圖片", filter == MediaFilter.PHOTOS) { onFilter(MediaFilter.PHOTOS) }
-                FilterPill("影片", filter == MediaFilter.VIDEOS) { onFilter(MediaFilter.VIDEOS) }
-            }
-            Spacer(Modifier.height(13.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (browserMode != BrowserMode.FAVORITES) {
+                Spacer(Modifier.height(5.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    FilterPill("全部", filter == MediaFilter.ALL) { onFilter(MediaFilter.ALL) }
+                    FilterPill("圖片", filter == MediaFilter.PHOTOS) { onFilter(MediaFilter.PHOTOS) }
+                    FilterPill("影片", filter == MediaFilter.VIDEOS) { onFilter(MediaFilter.VIDEOS) }
+                    Spacer(Modifier.weight(1f))
+                    Box {
+                        IconButton(
+                            onClick = { sortMenu = true },
+                            modifier = Modifier.size(34.dp),
+                        ) {
+                            Icon(
+                                if (sort == MediaSort.CREATED) Icons.Default.CalendarMonth
+                                else Icons.Default.Storage,
+                                if (sort == MediaSort.CREATED) "按建立時間排序"
+                                else "按檔案大小排序",
+                                tint = Accent,
+                                modifier = Modifier.size(21.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = sortMenu,
+                            onDismissRequest = { sortMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("建立時間") },
+                                leadingIcon = { Icon(Icons.Default.CalendarMonth, null) },
+                                onClick = { onSort(MediaSort.CREATED); sortMenu = false },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("檔案大小") },
+                                leadingIcon = { Icon(Icons.Default.Storage, null) },
+                                onClick = { onSort(MediaSort.SIZE); sortMenu = false },
+                            )
+                        }
+                    }
+                    IconButton(onClick = onReverse, modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            if (ascending) Icons.Default.ArrowUpward
+                            else Icons.Default.ArrowDownward,
+                            if (ascending) "正排" else "倒排",
+                            tint = Accent,
+                            modifier = Modifier.size(21.dp),
+                        )
+                    }
+                }
+            } else {
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    when (browserMode) {
-                        BrowserMode.ALL -> "共 ${visible.size} 個項目"
-                        BrowserMode.FOLDERS -> "${folders.size} 個資料夾 · ${visible.size} 個檔案"
-                        BrowserMode.FAVORITES -> "${folders.size} 個最愛資料夾"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
+                    folders.size.toString() + " 個最愛資料夾",
+                    style = MaterialTheme.typography.labelSmall,
                     color = Subtle,
-                    modifier = Modifier.weight(1f),
                 )
-                var sortMenu by remember { mutableStateOf(false) }
-                if (browserMode != BrowserMode.FAVORITES) Box {
-                    TextButton(onClick = { sortMenu = true }) {
-                        Icon(if (sort == MediaSort.CREATED) Icons.Default.CalendarMonth else Icons.Default.Storage, null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (sort == MediaSort.CREATED) "建立時間" else "檔案大小")
-                    }
-                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("建立時間") },
-                            leadingIcon = { Icon(Icons.Default.CalendarMonth, null) },
-                            onClick = { onSort(MediaSort.CREATED); sortMenu = false },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("檔案大小") },
-                            leadingIcon = { Icon(Icons.Default.Storage, null) },
-                            onClick = { onSort(MediaSort.SIZE); sortMenu = false },
-                        )
-                    }
-                }
-                if (browserMode != BrowserMode.FAVORITES) IconButton(onClick = onReverse, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                        if (ascending) "正排" else "倒排",
-                        tint = Accent,
-                    )
-                }
-                if (browserMode != BrowserMode.FAVORITES) IconButton(onClick = onToggleMode, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        if (listMode) Icons.Default.GridView else Icons.Default.ViewList,
-                        if (listMode) "切換網格" else "切換清單",
-                        tint = Subtle,
-                    )
-                }
             }
         }
         when {
@@ -1078,7 +1158,7 @@ private fun BrowserTab(
         modifier = Modifier
             .background(if (selected) Accent.copy(alpha = 0.22f) else Panel, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 11.dp, vertical = 11.dp),
+            .padding(horizontal = 9.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
@@ -1208,7 +1288,7 @@ private fun FilterPill(label: String, active: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .background(if (active) Accent else Panel, RoundedCornerShape(30.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
         Text(
             label,
