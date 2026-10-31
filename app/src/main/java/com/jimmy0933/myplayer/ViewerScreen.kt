@@ -70,6 +70,7 @@ fun ViewerScreen(
     onNextVideo: () -> Unit,
     progressBarScale: Float,
     progressBarWidth: Float,
+    controlsAutoHideSeconds: Int,
     decoderPreferences: DecoderPreferences,
 ) {
     val context = LocalContext.current
@@ -178,13 +179,15 @@ fun ViewerScreen(
         lastInteraction++
         showControls = true
     }
-    // Only video playback auto-hides the top title and bottom controls.
-    // Pausing or navigating to a photo keeps controls visible.
-    LaunchedEffect(media.uri, playing, lastInteraction) {
-        if (media.isVideo && playing) {
-            delay(2_000L)
+    // One user-configurable timer controls both the title and bottom bar.
+    // 0 = always visible; photos and paused videos also keep controls visible.
+    // Each interaction restarts the countdown, including while scrubbing.
+    LaunchedEffect(media.uri, playing, lastInteraction, controlsAutoHideSeconds) {
+        val timeoutMs = PlaybackControlsTimeout.delayMillis(controlsAutoHideSeconds)
+        if (media.isVideo && playing && timeoutMs != null) {
+            delay(timeoutMs)
             showControls = false
-        } else if (media.isVideo && !playing) {
+        } else if (media.isVideo) {
             showControls = true
         }
     }

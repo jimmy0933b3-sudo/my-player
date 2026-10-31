@@ -17,6 +17,24 @@ class PlaybackProgressStyleTest {
         assertEquals(75f, PlaybackProgressStyle.touchHeightDp(2.5f), .001f)
     }
 
+    @Test fun playbackControlsKeepTheExistingTwoSecondDefault() {
+        assertEquals(2, PlaybackControlsTimeout.DEFAULT_SECONDS)
+        assertEquals(2000L, PlaybackControlsTimeout.delayMillis(PlaybackControlsTimeout.DEFAULT_SECONDS))
+    }
+
+    @Test fun playbackControlsTimerSupportsOneToFifteenSeconds() {
+        assertEquals(1000L, PlaybackControlsTimeout.delayMillis(1))
+        assertEquals(5000L, PlaybackControlsTimeout.delayMillis(5))
+        assertEquals(15000L, PlaybackControlsTimeout.delayMillis(15))
+    }
+
+    @Test fun neverHideIsSupportedAndMalformedSavedValuesAreClamped() {
+        assertEquals(null, PlaybackControlsTimeout.delayMillis(PlaybackControlsTimeout.NEVER))
+        assertEquals(PlaybackControlsTimeout.NEVER, PlaybackControlsTimeout.normalize(0))
+        assertEquals(1, PlaybackControlsTimeout.normalize(-5))
+        assertEquals(15, PlaybackControlsTimeout.normalize(999))
+    }
+
     @Test fun scaleAndWidthAreClampedForPersistedSettings() {
         assertEquals(.8f, PlaybackProgressStyle.scale(-1f), .001f)
         assertEquals(2.5f, PlaybackProgressStyle.scale(99f), .001f)

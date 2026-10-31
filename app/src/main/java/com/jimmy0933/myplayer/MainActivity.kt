@@ -31,6 +31,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -71,6 +73,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private val Background = Color(0xFF0B1120)
 private val Panel = Color(0xFF172239)
@@ -149,6 +152,20 @@ private fun MyPlayerApp() {
     fun updateProgressWidth(newValue: Float) {
         progressBarWidth = PlaybackProgressStyle.width(newValue)
         playbackPrefs.edit().putFloat("progress_width", progressBarWidth).apply()
+    }
+    var controlsAutoHideSeconds by remember {
+        mutableIntStateOf(
+            PlaybackControlsTimeout.normalize(
+                playbackPrefs.getInt(
+                    "controls_auto_hide_seconds",
+                    PlaybackControlsTimeout.DEFAULT_SECONDS,
+                ),
+            ),
+        )
+    }
+    fun updateControlsAutoHideSeconds(newValue: Int) {
+        controlsAutoHideSeconds = PlaybackControlsTimeout.normalize(newValue)
+        playbackPrefs.edit().putInt("controls_auto_hide_seconds", controlsAutoHideSeconds).apply()
     }
     val galleryPrefs = remember(context) {
         context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
@@ -522,6 +539,7 @@ private fun MyPlayerApp() {
                 loader = loader,
                 progressBarScale = progressBarScale,
                 progressBarWidth = progressBarWidth,
+                controlsAutoHideSeconds = controlsAutoHideSeconds,
                 decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
@@ -721,9 +739,13 @@ private fun MyPlayerApp() {
     if (playbackSettingsOpen) {
         AlertDialog(
             onDismissRequest = { playbackSettingsOpen = false },
-            title = { Text("播放進度條設定") },
+            title = { Text("播放介面設定") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 460.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
                     Text(
                         "進度條粗細：" + (progressBarScale * 100).toInt() + "%",
                         color = Color.White,
@@ -744,9 +766,59 @@ private fun MyPlayerApp() {
                         onValueChange = ::updateProgressWidth,
                         valueRange = 0.6f..1f,
                     )
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "標題與進度條消失時間：" +
+                            if (controlsAutoHideSeconds == PlaybackControlsTimeout.NEVER) {
+                                "不自動隱藏"
+                            } else {
+                                "${controlsAutoHideSeconds} 秒"
+                            },
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = if (controlsAutoHideSeconds == PlaybackControlsTimeout.NEVER) {
+                            PlaybackControlsTimeout.DEFAULT_SECONDS.toFloat()
+                        } else controlsAutoHideSeconds.toFloat(),
+                        onValueChange = {
+                            updateControlsAutoHideSeconds(it.roundToInt())
+                        },
+                        valueRange = PlaybackControlsTimeout.MIN_SECONDS.toFloat()..
+                            PlaybackControlsTimeout.MAX_SECONDS.toFloat(),
+                        steps = PlaybackControlsTimeout.MAX_SECONDS -
+                            PlaybackControlsTimeout.MIN_SECONDS - 1,
+                        enabled = controlsAutoHideSeconds != PlaybackControlsTimeout.NEVER,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "永不自動隱藏",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Switch(
+                            checked = controlsAutoHideSeconds == PlaybackControlsTimeout.NEVER,
+                            onCheckedChange = { alwaysVisible ->
+                                updateControlsAutoHideSeconds(
+                                    if (alwaysVisible) PlaybackControlsTimeout.NEVER
+                                    else PlaybackControlsTimeout.DEFAULT_SECONDS,
+                                )
+                            },
+                        )
+                    }
+                    Text(
+                        "影片播放時，沒有操作達指定秒數後，同時隱藏上方標題及下方進度條、播放按鈕。暫停時仍顯示。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Subtle,
+                    )
                     TextButton(onClick = {
                         updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
                         updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
+                        updateControlsAutoHideSeconds(PlaybackControlsTimeout.DEFAULT_SECONDS)
                     }) {
                         Text("恢復預設")
                     }
