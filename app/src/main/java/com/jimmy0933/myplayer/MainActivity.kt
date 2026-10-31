@@ -856,7 +856,11 @@ private fun GalleryScreen(
                 Brush.verticalGradient(
                     listOf(Color(0xFF192947), Background, Background),
                 ),
-            ),
+            )
+            // Android 15/16 draws edge-to-edge. Keep the compact header and
+            // all right-side actions below the status bar and display cutout,
+            // and the gallery items above the system navigation bar.
+            .safeDrawingPadding(),
     ) {
         // Keep the library visible: secondary controls and tall summary cards
         // are collapsed by default instead of occupying most of the screen.

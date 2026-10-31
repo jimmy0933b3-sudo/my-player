@@ -326,6 +326,9 @@ fun ViewerScreen(
             Row(
                 Modifier.fillMaxWidth().align(Alignment.TopCenter)
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .8f), Color.Transparent)))
+                    // Media stays fullscreen, while viewer action icons remain
+                    // tappable below the Android status bar (including landscape).
+                    .statusBarsPadding()
                     .padding(start = 8.dp, end = 16.dp,
                         top = if (isLandscape) 2.dp else 12.dp,
                         bottom = if (isLandscape) 8.dp else 40.dp),
@@ -371,6 +374,9 @@ fun ViewerScreen(
             Column(
                 Modifier.fillMaxWidth().align(Alignment.BottomCenter)
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .91f))))
+                    // Keep playback buttons and seek bar above Android gesture
+                    // navigation without cropping the underlying video.
+                    .navigationBarsPadding()
                     .padding(
                         horizontal = if (isLandscape) 12.dp else 20.dp,
                         vertical = if (isLandscape) 4.dp else 22.dp,
