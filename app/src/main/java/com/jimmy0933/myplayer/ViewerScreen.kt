@@ -623,9 +623,6 @@ fun ViewerScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Text("上一部／下一部影片  ·  左右滑快轉／倒退  ·  雙指縮放",
-                            color = Color(0xFFB8C5DD), style = MaterialTheme.typography.labelSmall)
                     }
                 } else if (!isLandscape) {
                     Text("上下滑切換照片／影片  ·  雙指縮放",
