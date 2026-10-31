@@ -716,6 +716,12 @@ private fun MyPlayerApp() {
                         onValueChange = ::updateProgressWidth,
                         valueRange = 0.6f..1f,
                     )
+                    TextButton(onClick = {
+                        updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
+                        updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
+                    }) {
+                        Text("恢復預設")
+                    }
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "預覽（直向、橫向播放皆適用）",
@@ -761,17 +767,6 @@ private fun MyPlayerApp() {
             settings = decoderPreferences,
             onChange = ::saveDecoderSettings,
             onDismiss = { decoderSettingsOpen = false },
-        )
-    }
-    if (false) {
-        AlertDialog(
-            onDismissRequest = {},
-            confirmButton = {
-                TextButton(onClick = {
-                    updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
-                    updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
-                }) { Text("恢復預設") }
-            },
         )
     }
     deleteError?.let { message ->
