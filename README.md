@@ -32,3 +32,7 @@ gradle :app:assembleDebug
 ```
 
 在 GitHub 上每次推送 `main` 都會觸發 Release 工作流程。APK 下載請見 [Releases](https://github.com/jimmy0933b3-sudo/my-player/releases/latest)。
+
+### 放大影片手勢
+
+即使影片已放大，單指左右滑動依然快轉／倒退；雙指進行縮放與畫面平移，避免搶走水平快轉手勢。

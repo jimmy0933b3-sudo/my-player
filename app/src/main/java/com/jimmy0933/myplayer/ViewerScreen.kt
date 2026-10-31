@@ -163,27 +163,39 @@ fun ViewerScreen(
                             pressed.size == 1 -> {
                                 val pointer = pressed[0]
                                 val delta = pointer.position - pointer.previousPosition
-                                if (zoom > 1.01f) {
-                                    translation = boundPan(
-                                        translation + delta, zoom, size.width, size.height,
-                                    )
-                                    pointer.consume()
-                                } else if (!transformed) {
+                                // Video seeking has priority over zoomed-video panning.
+                                // One finger horizontally seeks at *any* zoom level;
+                                // use two fingers to pan/zoom a magnified video.
+                                if (!transformed) {
                                     horizontal += delta.x
                                     vertical += delta.y
-                                    if (media.isVideo && abs(horizontal) > 18.dp.toPx() &&
-                                        abs(horizontal) > abs(vertical) * 1.15f) {
-                                        val base = seekOrigin ?: (player?.currentPosition ?: 0L)
-                                        seekOrigin = base
-                                        val duration = (player?.duration?.takeIf { it > 0L }
-                                            ?: media.durationMs).coerceAtLeast(0L)
-                                        val target = (base + (horizontal * 65f).toLong())
-                                            .coerceIn(0L, duration)
-                                        player?.seekTo(target)
-                                        currentMs = target
-                                        seekHint = "${durationLabel(target)} / ${durationLabel(duration)}"
-                                        pointer.consume()
-                                    }
+                                }
+                                if (shouldSeekVideoSwipe(
+                                        media.isVideo,
+                                        transformed,
+                                        horizontal,
+                                        vertical,
+                                        18.dp.toPx(),
+                                    ) || (seekOrigin != null && !transformed)) {
+                                    val base = seekOrigin ?: (player?.currentPosition ?: 0L)
+                                    seekOrigin = base
+                                    val duration = (player?.duration?.takeIf { it > 0L }
+                                        ?: media.durationMs).coerceAtLeast(0L)
+                                    val target = (base + (horizontal * 65f).toLong())
+                                        .coerceIn(0L, duration)
+                                    player?.seekTo(target)
+                                    currentMs = target
+                                    seekHint = "${durationLabel(target)} / ${durationLabel(duration)}"
+                                    pointer.consume()
+                                } else if (zoom > 1.01f) {
+                                    // Image: single-finger pan. Zoomed video:
+                                    // single-finger vertical pan; horizontal seek is reserved.
+                                    val panDelta = if (media.isVideo && !transformed)
+                                        Offset(0f, delta.y) else delta
+                                    translation = boundPan(
+                                        translation + panDelta, zoom, size.width, size.height,
+                                    )
+                                    pointer.consume()
                                 }
                             }
                         }
@@ -332,6 +344,17 @@ fun ViewerScreen(
         }
     }
 }
+
+// Keep gesture priority deterministic regardless of zoom. Pure for regression testing.
+internal fun shouldSeekVideoSwipe(
+    isVideo: Boolean,
+    wasPinchGesture: Boolean,
+    horizontalPx: Float,
+    verticalPx: Float,
+    thresholdPx: Float,
+): Boolean = isVideo && !wasPinchGesture &&
+    abs(horizontalPx) > thresholdPx &&
+    abs(horizontalPx) > abs(verticalPx) * 1.15f
 
 private fun boundPan(raw: Offset, zoom: Float, width: Int, height: Int): Offset {
     val maxX = (zoom - 1f).coerceAtLeast(0f) * width / 2f
