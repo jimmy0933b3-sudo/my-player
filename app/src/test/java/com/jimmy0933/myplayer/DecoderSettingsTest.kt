@@ -22,7 +22,7 @@ class DecoderSettingsTest {
 
     @Test fun defaultsPrioritizeCompatibilityAndAutomaticRecovery() {
         val prefs = DecoderPreferences()
-        assertEquals(VideoDecoderPreference.SYSTEM, prefs.video)
+        assertEquals(VideoDecoderPreference.HARDWARE_FIRST, prefs.video)
         assertEquals(false, prefs.softwareAudioFirst)
         assertEquals(true, prefs.decoderFallback)
         assertEquals(true, prefs.recoverOnPlaybackError)
