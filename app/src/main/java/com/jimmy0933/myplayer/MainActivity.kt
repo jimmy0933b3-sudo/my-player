@@ -965,11 +965,14 @@ private fun GalleryScreen(
                 action = if (allMedia.isEmpty()) "管理媒體權限" else "重新掃描",
                 onClick = if (allMedia.isEmpty()) onPermission else onRefresh,
             )
-            listMode -> LazyColumn(
-                state = listState,
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            listMode -> Box(Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    // Leave a narrow independent touch lane for the draggable scrollbar.
+                    contentPadding = PaddingValues(start = 16.dp, end = 42.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 items(folders, key = { "folder-${it.key}" }) { folder ->
                     FolderListItem(
                         folder = folder,
@@ -1006,6 +1009,11 @@ private fun GalleryScreen(
                         )
                     }
                 }
+                }
+                MediaListScrollbar(
+                    listState = listState,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                )
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
