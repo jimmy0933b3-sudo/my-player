@@ -21,3 +21,17 @@ internal object PlaybackProgressStyle {
     fun touchHeightDp(value: Float): Float =
         (30f * scale(value)).coerceAtLeast(30f)
 }
+
+/** 0 means playback controls stay visible; legacy default is 2 seconds. */
+internal object PlaybackControlsTimeout {
+    const val NEVER = 0
+    const val DEFAULT_SECONDS = 2
+    const val MIN_SECONDS = 1
+    const val MAX_SECONDS = 15
+
+    fun normalize(value: Int): Int = if (value == NEVER) NEVER
+        else value.coerceIn(MIN_SECONDS, MAX_SECONDS)
+
+    fun delayMillis(seconds: Int): Long? =
+        normalize(seconds).takeIf { it != NEVER }?.times(1_000L)
+}
