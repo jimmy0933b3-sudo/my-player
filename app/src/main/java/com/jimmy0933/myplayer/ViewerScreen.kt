@@ -43,6 +43,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
@@ -94,7 +95,11 @@ fun ViewerScreen(
     val player = remember(media.uri, effectiveDecoder) {
         if (media.isVideo) ExoPlayer.Builder(
             context, DecoderSettings.renderers(context, effectiveDecoder),
-        ).build() else null
+        )
+            // Exact seeking decodes and discards frames after the previous
+            // keyframe. Nearest keyframe trades small time error for fast resume.
+            .setSeekParameters(SeekParameters.CLOSEST_SYNC)
+            .build() else null
     }
     DisposableEffect(player, media.uri) {
         val listener = object : Player.Listener {
@@ -158,6 +163,7 @@ fun ViewerScreen(
     var showControls by remember(media.uri) { mutableStateOf(true) }
     var playing by remember(media.uri) { mutableStateOf(media.isVideo) }
     var currentMs by remember(media.uri) { mutableLongStateOf(0L) }
+    var pendingSliderFraction by remember(media.uri) { mutableStateOf<Float?>(null) }
     var seekHint by remember(media.uri) { mutableStateOf<String?>(null) }
     val tapScope = rememberCoroutineScope()
     var previousZoomTapMillis by remember(media.uri) { mutableLongStateOf(-1L) }
@@ -191,7 +197,7 @@ fun ViewerScreen(
         }
     }
     val totalDuration = player?.duration?.takeIf { it > 0L } ?: media.durationMs
-    val sliderPosition = if (totalDuration > 0L) {
+    val sliderPosition = pendingSliderFraction ?: if (totalDuration > 0L) {
         (currentMs.toFloat() / totalDuration).coerceIn(0f, 1f)
     } else 0f
 
@@ -233,12 +239,17 @@ fun ViewerScreen(
                     var horizontal = 0f
                     var transformed = false
                     var seekOrigin: Long? = null
+                    var pendingSwipeTarget: Long? = null
                     do {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.filter { it.pressed }
                         when {
                             pressed.size >= 2 -> {
                                 transformed = true
+                                // A two-finger pinch cancels any pending one-finger seek.
+                                pendingSwipeTarget = null
+                                seekOrigin = null
+                                seekHint = null
                                 val a = pressed[0]
                                 val b = pressed[1]
                                 val priorDistance = (a.previousPosition - b.previousPosition).getDistance()
@@ -279,10 +290,10 @@ fun ViewerScreen(
                                     seekOrigin = base
                                     val duration = (player?.duration?.takeIf { it > 0L }
                                         ?: media.durationMs).coerceAtLeast(0L)
-                                    val target = (base + (horizontal * 65f).toLong())
-                                        .coerceIn(0L, duration)
-                                    player?.seekTo(target)
-                                    currentMs = target
+                                    val target = swipeSeekTarget(base, horizontal, duration)
+                                    pendingSwipeTarget = target
+                                    // Update the live preview without flushing/restarting
+                                    // the decoder on every pointer movement.
                                     seekHint = "${durationLabel(target)} / ${durationLabel(duration)}"
                                     pointer.consume()
                                 } else if (zoom > 1.01f) {
@@ -298,6 +309,13 @@ fun ViewerScreen(
                             }
                         }
                     } while (event.changes.any { it.pressed })
+
+                    if (!transformed) {
+                        pendingSwipeTarget?.let { finalTarget ->
+                            player?.seekTo(finalTarget)
+                            currentMs = finalTarget
+                        }
+                    }
 
                     val isTap = !transformed && seekOrigin == null &&
                         abs(vertical) < 10.dp.toPx() && abs(horizontal) < 10.dp.toPx()
@@ -460,13 +478,20 @@ fun ViewerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (media.isVideo) {
-                    val seekToFraction: (Float) -> Unit = { fraction ->
+                    val previewSeekFraction: (Float) -> Unit = { fraction ->
                         notifyInteraction()
-                        if (totalDuration > 0L) {
-                            val target = (fraction * totalDuration).toLong()
-                            player?.seekTo(target)
-                            currentMs = target
+                        // Do not seek on each Slider tick; only update the thumb.
+                        pendingSliderFraction = fraction.coerceIn(0f, 1f)
+                    }
+                    val commitSeekFraction: () -> Unit = {
+                        pendingSliderFraction?.let { fraction ->
+                            val target = progressSeekTarget(fraction, totalDuration)
+                            if (totalDuration > 0L) {
+                                player?.seekTo(target)
+                                currentMs = target
+                            }
                         }
+                        pendingSliderFraction = null
                     }
                     if (isLandscape) {
                         // A single compact row keeps the landscape video unobstructed.
@@ -523,7 +548,8 @@ fun ViewerScreen(
                             ) {
                                 VideoProgressSlider(
                                     value = sliderPosition,
-                                    onValueChange = seekToFraction,
+                                    onValueChange = previewSeekFraction,
+                                    onValueChangeFinished = commitSeekFraction,
                                     modifier = Modifier
                                         .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
                                         .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
@@ -539,7 +565,8 @@ fun ViewerScreen(
                     } else {
                         VideoProgressSlider(
                             value = sliderPosition,
-                            onValueChange = seekToFraction,
+                            onValueChange = previewSeekFraction,
+                            onValueChangeFinished = commitSeekFraction,
                             modifier = Modifier
                                 .fillMaxWidth(PlaybackProgressStyle.width(progressBarWidth))
                                 .height(PlaybackProgressStyle.touchHeightDp(progressBarScale).dp),
@@ -610,6 +637,7 @@ fun ViewerScreen(
 private fun VideoProgressSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
     scale: Float = PlaybackProgressStyle.DEFAULT_SCALE,
 ) {
@@ -617,6 +645,7 @@ private fun VideoProgressSlider(
     Slider(
         value = value,
         onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
         modifier = modifier,
         colors = SliderDefaults.colors(
             thumbColor = Color(0xFF92A9FF),
