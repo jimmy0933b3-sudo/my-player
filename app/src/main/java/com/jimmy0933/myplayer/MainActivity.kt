@@ -11,8 +11,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -85,6 +88,7 @@ private fun MyPlayerApp() {
     var sort by remember { mutableStateOf(MediaSort.CREATED) }
     var ascending by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
     var listMode by remember { mutableStateOf(false) }
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
@@ -147,6 +151,11 @@ private fun MyPlayerApp() {
             onReverse = { ascending = !ascending },
             query = query,
             onQuery = { query = it },
+            searchExpanded = searchExpanded,
+            onSearchToggle = {
+                searchExpanded = !searchExpanded
+                if (!searchExpanded) query = ""
+            },
             listMode = listMode,
             onToggleMode = { listMode = !listMode },
             onRefresh = { refresh++ },
@@ -174,6 +183,8 @@ private fun GalleryScreen(
     onReverse: () -> Unit,
     query: String,
     onQuery: (String) -> Unit,
+    searchExpanded: Boolean,
+    onSearchToggle: () -> Unit,
     listMode: Boolean,
     onToggleMode: () -> Unit,
     onRefresh: () -> Unit,
@@ -182,6 +193,12 @@ private fun GalleryScreen(
 ) {
     val photoCount = remember(allMedia) { allMedia.count { !it.isVideo } }
     val videoCount = remember(allMedia) { allMedia.count { it.isVideo } }
+    // Only chronological sorting displays date sections. Keep the original
+    // indices so tapping an item still opens the correct position in the viewer.
+    val dateGroups = remember(visible, sort) {
+        if (sort == MediaSort.CREATED) MediaLibrary.groupByCreatedDay(visible)
+        else emptyList()
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -204,36 +221,44 @@ private fun GalleryScreen(
                     Text("MY PLAYER", style = MaterialTheme.typography.labelMedium, color = Mint, fontWeight = FontWeight.Bold)
                     Text("我的影像庫", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 }
+                IconButton(onClick = onSearchToggle) {
+                    Icon(
+                        if (searchExpanded) Icons.Default.Close else Icons.Default.Search,
+                        if (searchExpanded) "收合搜尋" else "展開搜尋",
+                        tint = if (searchExpanded) Accent else Subtle,
+                    )
+                }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
                 }
             }
 
-            Spacer(Modifier.height(19.dp))
+            if (searchExpanded) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("搜尋照片或影片名稱", color = Subtle) },
+                    leadingIcon = { Icon(Icons.Default.Search, null, tint = Subtle) },
+                    trailingIcon = if (query.isNotEmpty()) {
+                        { IconButton(onClick = { onQuery("") }) { Icon(Icons.Default.Close, "清除搜尋文字") } }
+                    } else null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Panel.copy(alpha = .7f),
+                        unfocusedContainerColor = Panel.copy(alpha = .7f),
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = Color(0xFF30405E),
+                    ),
+                )
+            }
+            Spacer(Modifier.height(17.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricChip("照片", photoCount.toString(), Icons.Default.Image, Modifier.weight(1f))
                 MetricChip("影片", videoCount.toString(), Icons.Default.Movie, Modifier.weight(1f))
             }
-
-            Spacer(Modifier.height(18.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQuery,
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("搜尋照片或影片名稱", color = Subtle) },
-                leadingIcon = { Icon(Icons.Default.Search, null, tint = Subtle) },
-                trailingIcon = if (query.isNotEmpty()) {
-                    { IconButton(onClick = { onQuery("") }) { Icon(Icons.Default.Close, "清除搜尋") } }
-                } else null,
-                singleLine = true,
-                shape = RoundedCornerShape(17.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Panel.copy(alpha = .7f),
-                    unfocusedContainerColor = Panel.copy(alpha = .7f),
-                    focusedBorderColor = Accent,
-                    unfocusedBorderColor = Color(0xFF30405E),
-                ),
-            )
             Spacer(Modifier.height(14.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -308,8 +333,22 @@ private fun GalleryScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                    MediaListItem(item, loader) { onOpen(index) }
+                if (sort == MediaSort.CREATED) {
+                    dateGroups.forEach { group ->
+                        item(key = "date-${group.key}") {
+                            DateGroupHeader(group.label, group.entries.size)
+                        }
+                        items(
+                            items = group.entries,
+                            key = { "${it.value.isVideo}-${it.value.id}" },
+                        ) { entry ->
+                            MediaListItem(entry.value, loader) { onOpen(entry.index) }
+                        }
+                    }
+                } else {
+                    itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
+                        MediaListItem(item, loader) { onOpen(index) }
+                    }
                 }
             }
             else -> LazyVerticalGrid(
@@ -318,11 +357,59 @@ private fun GalleryScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(15.dp),
             ) {
-                itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                    MediaGridItem(item, loader) { onOpen(index) }
+                if (sort == MediaSort.CREATED) {
+                    dateGroups.forEach { group ->
+                        item(key = "date-${group.key}", span = { GridItemSpan(maxLineSpan) }) {
+                            DateGroupHeader(group.label, group.entries.size)
+                        }
+                        items(
+                            items = group.entries,
+                            key = { "${it.value.isVideo}-${it.value.id}" },
+                        ) { entry ->
+                            MediaGridItem(entry.value, loader) { onOpen(entry.index) }
+                        }
+                    }
+                } else {
+                    itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
+                        MediaGridItem(item, loader) { onOpen(index) }
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DateGroupHeader(label: String, count: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 13.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.CalendarToday,
+            contentDescription = null,
+            tint = Mint,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            label,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            "$count 個項目",
+            color = Subtle,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Spacer(Modifier.width(12.dp))
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = Color(0xFF33415C),
+            thickness = 1.dp,
+        )
     }
 }
 

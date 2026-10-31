@@ -10,6 +10,10 @@ import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 data class LocalMedia(
     val id: Long,
@@ -24,7 +28,36 @@ data class LocalMedia(
 enum class MediaFilter { ALL, PHOTOS, VIDEOS }
 enum class MediaSort { CREATED, SIZE }
 
+// An IndexedValue preserves the media's position in the *sorted* collection.
+// Group headings are not part of that collection or the viewer swipe sequence.
+data class MediaDayGroup(
+    val key: String,
+    val label: String,
+    val entries: List<IndexedValue<LocalMedia>>,
+)
+
 object MediaLibrary {
+    private val sectionLabelFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd EEEE", Locale.TAIWAN)
+
+    fun createdDayKey(timestampMs: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        if (timestampMs <= 0L) return "unknown"
+        return Instant.ofEpochMilli(timestampMs).atZone(zone).toLocalDate().toString()
+    }
+
+    fun groupByCreatedDay(sortedMedia: List<LocalMedia>): List<MediaDayGroup> {
+        val zone = ZoneId.systemDefault()
+        return sortedMedia.withIndex()
+            .groupBy { createdDayKey(it.value.createdAtMs, zone) }
+            .map { (key, entries) ->
+                MediaDayGroup(
+                    key = key,
+                    label = if (key == "unknown") "未知日期"
+                            else java.time.LocalDate.parse(key).format(sectionLabelFormat),
+                    entries = entries,
+                )
+            }
+    }
+
     fun requestedPermissions(): Array<String> = when {
         Build.VERSION.SDK_INT >= 34 -> arrayOf(
             Manifest.permission.READ_MEDIA_IMAGES,

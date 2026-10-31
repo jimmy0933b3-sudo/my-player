@@ -5,6 +5,7 @@ package com.jimmy0933.myplayer
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -239,6 +240,8 @@ fun ViewerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (media.isVideo) {
+                    // Keep the slider fully seekable, but use a thin 3dp track,
+                    // a subtle 10dp knob and a compact 30dp visual height.
                     Slider(
                         value = sliderPosition,
                         onValueChange = { fraction ->
@@ -248,11 +251,30 @@ fun ViewerScreen(
                                 currentMs = target
                             }
                         },
+                        modifier = Modifier.fillMaxWidth(0.96f).height(30.dp),
                         colors = SliderDefaults.colors(
                             thumbColor = Color(0xFF92A9FF),
                             activeTrackColor = Color(0xFF92A9FF),
                             inactiveTrackColor = Color.White.copy(alpha = .25f),
                         ),
+                        thumb = {
+                            Box(
+                                Modifier.size(10.dp)
+                                    .background(Color(0xFF92A9FF), CircleShape),
+                            )
+                        },
+                        track = { state ->
+                            Box(
+                                Modifier.fillMaxWidth().height(3.dp)
+                                    .background(Color.White.copy(alpha = .25f), CircleShape),
+                            ) {
+                                Box(
+                                    Modifier.fillMaxWidth(state.value.coerceIn(0f, 1f))
+                                        .fillMaxHeight()
+                                        .background(Color(0xFF92A9FF), CircleShape),
+                                )
+                            }
+                        },
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
