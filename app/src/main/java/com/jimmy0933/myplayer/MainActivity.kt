@@ -5,6 +5,15 @@ import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.debounce
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -134,14 +143,23 @@ private fun MyPlayerApp() {
         viewerItems = null
         openedMediaUri = null
     }
-    var deleteConfirmation by remember { mutableStateOf<LocalMedia?>(null) }
-    var deletePending by remember { mutableStateOf<LocalMedia?>(null) }
+    var deleteConfirmation by remember { mutableStateOf<List<LocalMedia>?>(null) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf(emptySet<String>()) }
+    var mediaManageInfo by remember { mutableStateOf(false) }
+    var canManageMedia by remember {
+        mutableStateOf(Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context))
+    }
+    var pendingBatch by remember { mutableStateOf(emptyList<LocalMedia>()) }
+    var deleteQueue by remember { mutableStateOf(emptyList<LocalMedia>()) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
+    var deletedCount by remember { mutableIntStateOf(0) }
+    var failedCount by remember { mutableIntStateOf(0) }
+    var cancelledDeletion by remember { mutableStateOf(false) }
+    var approvedLegacyUri by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
-    // Let the sensor rotate the viewer even when Android auto-rotate is disabled.
-    // Keep the media library upright; Compose and ExoPlayer survive orientation
-    // changes because the activity handles orientation/screenSize config changes.
     val requestedScreenOrientation = if (viewerItems != null) {
         ActivityInfo.SCREEN_ORIENTATION_SENSOR
     } else {
@@ -153,120 +171,157 @@ private fun MyPlayerApp() {
         }
     }
 
-    // Start at the top of a new folder/search/sort, but not after closing a viewer.
-    LaunchedEffect(browserMode, currentFolderKey, filter, sort, ascending, query) {
-        galleryListState.scrollToItem(0)
-        galleryGridState.scrollToItem(0)
-    }
-
-    fun removeDeletedMedia(target: LocalMedia) {
-        allMedia = allMedia.filterNot { it.uri == target.uri }
-        val openItems = viewerItems
-        if (openItems != null) {
-            val remaining = openItems.filterNot { it.uri == target.uri }
-            if (remaining.isEmpty()) {
+    fun removeDeletedMedia(items: List<LocalMedia>) {
+        if (items.isEmpty()) return
+        val removed = items.mapTo(mutableSetOf()) { it.uri.toString() }
+        allMedia = allMedia.filterNot { it.uri.toString() in removed }
+        selectedUris = selectedUris - removed
+        viewerItems?.let { before ->
+            val activeUri = before.getOrNull(viewerIndex)?.uri?.toString()
+            val after = before.filterNot { it.uri.toString() in removed }
+            if (after.isEmpty()) {
                 viewerItems = null
                 openedMediaUri = null
                 pendingReturnUri = null
                 viewerIndex = 0
             } else {
-                viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
-                viewerItems = remaining
+                val newIndex = after.indexOfFirst { it.uri.toString() == activeUri }
+                viewerIndex = if (newIndex >= 0) newIndex else viewerIndex.coerceAtMost(after.lastIndex)
+                viewerItems = after
             }
-        }
-        refresh++ // Reconcile with MediaStore, including dates and count chips.
-    }
-
-    fun directlyDeleteMedia(target: LocalMedia) {
-        try {
-            val count = context.contentResolver.delete(target.uri, null, null)
-            if (count > 0) {
-                removeDeletedMedia(target)
-            } else {
-                deleteError = "找不到此檔案，可能已被其他應用程式刪除。"
-                refresh++
-            }
-        } catch (_: SecurityException) {
-            deleteError = "沒有刪除這個檔案的權限，請確認系統授權。"
-        } catch (_: Exception) {
-            deleteError = "刪除失敗，請稍後重試。"
-        } finally {
-            deleting = false
         }
     }
 
-    // Android 11+ performs the deletion in the system confirmation UI.
-    // Android 10 grants single-item write access, after which deletion is retried.
+    lateinit var processNext: () -> Unit
     val systemDeleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
-        val target = deletePending
-        deletePending = null
-        deleting = false
-        if (result.resultCode == Activity.RESULT_OK && target != null) {
+        val approved = pendingBatch
+        pendingBatch = emptyList()
+        if (result.resultCode == Activity.RESULT_OK) {
             if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
-                directlyDeleteMedia(target)
+                approvedLegacyUri = approved.firstOrNull()?.uri?.toString()
             } else {
-                removeDeletedMedia(target)
+                removeDeletedMedia(approved)
+                deletedCount += approved.size
+                deleteQueue = deleteQueue.drop(approved.size)
             }
+        } else {
+            cancelledDeletion = true
+            deleteQueue = emptyList()
         }
-        // A cancelled system prompt must leave the original file and list untouched.
+        processNext()
     }
     val legacyWriteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        val target = deletePending
-        deletePending = null
-        deleting = false
-        if (granted && target != null) directlyDeleteMedia(target)
-        else if (!granted) deleteError = "刪除需要儲存空間寫入權限。"
+        if (granted) processNext()
+        else {
+            cancelledDeletion = true
+            deleteQueue = emptyList()
+            processNext()
+        }
     }
-    fun requestMediaDeletion(target: LocalMedia) {
-        deleting = true
-        deleteError = null
-        try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                    deletePending = target
-                    val request = MediaStore.createDeleteRequest(
-                        context.contentResolver,
-                        listOf(target.uri),
-                    )
-                    systemDeleteLauncher.launch(
-                        IntentSenderRequest.Builder(request.intentSender).build(),
-                    )
+
+    processNext = {
+        if (deleteQueue.isEmpty()) {
+            deleting = false
+            pendingBatch = emptyList()
+            approvedLegacyUri = null
+            if (!cancelledDeletion && failedCount == 0) {
+                selectionMode = false
+                selectedUris = emptySet()
+            }
+            if (failedCount > 0 || cancelledDeletion) {
+                deleteError = "已刪除 " + deletedCount + " 個。" +
+                    if (failedCount > 0) "失敗 " + failedCount + " 個。" else "" +
+                    if (cancelledDeletion) "已取消剩餘檔案，未刪除的仍保留。" else ""
+            }
+            refresh++
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val batch = BatchDeletePolicy.nextChunk(deleteQueue, true)
+            try {
+                val request = MediaStore.createDeleteRequest(
+                    context.contentResolver, batch.map { it.uri },
+                )
+                pendingBatch = batch
+                systemDeleteLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            } catch (_: Exception) {
+                // Isolate an invalid URI without losing the other selected items.
+                if (batch.size > 1) {
+                    deleteQueue = batch.take(1) + deleteQueue.drop(batch.size) + batch.drop(1)
+                } else {
+                    failedCount++
+                    deleteQueue = deleteQueue.drop(1)
                 }
-                Build.VERSION.SDK_INT == Build.VERSION_CODES.Q -> {
+                processNext()
+            }
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED) {
+            legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            val item = deleteQueue.first()
+            scope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    runCatching { context.contentResolver.delete(item.uri, null, null) }
+                }
+                val failure = outcome.exceptionOrNull()
+                if (failure is RecoverableSecurityException &&
+                    Build.VERSION.SDK_INT == Build.VERSION_CODES.Q &&
+                    approvedLegacyUri != item.uri.toString()) {
                     try {
-                        val count = context.contentResolver.delete(target.uri, null, null)
-                        if (count > 0) removeDeletedMedia(target)
-                        else {
-                            deleteError = "找不到此檔案，可能已被刪除。"
-                            refresh++
-                        }
-                        deleting = false
-                    } catch (e: RecoverableSecurityException) {
-                        deletePending = target
+                        pendingBatch = listOf(item)
                         systemDeleteLauncher.launch(
                             IntentSenderRequest.Builder(
-                                e.userAction.actionIntent.intentSender,
+                                failure.userAction.actionIntent.intentSender,
                             ).build(),
                         )
+                    } catch (_: Exception) {
+                        failedCount++
+                        deleteQueue = deleteQueue.drop(1)
+                        processNext()
                     }
+                } else {
+                    if ((outcome.getOrNull() ?: 0) > 0) {
+                        removeDeletedMedia(listOf(item))
+                        deletedCount++
+                    } else {
+                        failedCount++
+                    }
+                    approvedLegacyUri = null
+                    deleteQueue = deleteQueue.drop(1)
+                    processNext()
                 }
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                ) != PackageManager.PERMISSION_GRANTED -> {
-                    deletePending = target
-                    legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                }
-                else -> directlyDeleteMedia(target)
             }
-        } catch (_: Exception) {
-            deletePending = null
-            deleting = false
-            deleteError = "無法啟動刪除流程，請稍後再試。"
+        }
+    }
+
+    fun beginDeletion(items: List<LocalMedia>) {
+        if (deleting) return
+        val unique = BatchDeletePolicy.unique(items) { it.uri.toString() }
+        if (unique.isEmpty()) return
+        deleting = true
+        deleteError = null
+        deletedCount = 0
+        failedCount = 0
+        cancelledDeletion = false
+        approvedLegacyUri = null
+        deleteQueue = unique
+        processNext()
+    }
+
+    fun requestDeletion(items: List<LocalMedia>) {
+        if (items.isEmpty() || deleting) return
+        val granted = Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context)
+        canManageMedia = granted
+        if (BatchDeletePolicy.needsAppConfirmation(Build.VERSION.SDK_INT, granted)) {
+            deleteConfirmation = items
+        } else {
+            beginDeletion(items)
         }
     }
 
@@ -276,7 +331,10 @@ private fun MyPlayerApp() {
 
     DisposableEffect(activity) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refresh++
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                canManageMedia = Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(context)
+                refresh++
+            }
         }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
