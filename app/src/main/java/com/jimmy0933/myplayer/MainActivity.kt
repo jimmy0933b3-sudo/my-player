@@ -20,10 +20,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -118,6 +122,18 @@ private fun MyPlayerApp() {
     }
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
+    // Retain the gallery viewport even while the fullscreen viewer is displayed.
+    val galleryListState = rememberLazyListState()
+    val galleryGridState = rememberLazyGridState()
+    var openedMediaUri by remember { mutableStateOf<String?>(null) }
+    var pendingReturnUri by remember { mutableStateOf<String?>(null) }
+    fun closeViewer() {
+        // Keep the existing exact offset unless the user swiped to another item.
+        val lastViewedUri = viewerItems?.getOrNull(viewerIndex)?.uri?.toString()
+        pendingReturnUri = lastViewedUri?.takeIf { it != openedMediaUri }
+        viewerItems = null
+        openedMediaUri = null
+    }
     var deleteConfirmation by remember { mutableStateOf<LocalMedia?>(null) }
     var deletePending by remember { mutableStateOf<LocalMedia?>(null) }
     var deleteError by remember { mutableStateOf<String?>(null) }
@@ -137,6 +153,12 @@ private fun MyPlayerApp() {
         }
     }
 
+    // Start at the top of a new folder/search/sort, but not after closing a viewer.
+    LaunchedEffect(browserMode, currentFolderKey, filter, sort, ascending, query) {
+        galleryListState.scrollToItem(0)
+        galleryGridState.scrollToItem(0)
+    }
+
     fun removeDeletedMedia(target: LocalMedia) {
         allMedia = allMedia.filterNot { it.uri == target.uri }
         val openItems = viewerItems
@@ -144,6 +166,8 @@ private fun MyPlayerApp() {
             val remaining = openItems.filterNot { it.uri == target.uri }
             if (remaining.isEmpty()) {
                 viewerItems = null
+                openedMediaUri = null
+                pendingReturnUri = null
                 viewerIndex = 0
             } else {
                 viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
@@ -294,7 +318,7 @@ private fun MyPlayerApp() {
     }
 
     if (viewerItems != null) {
-        BackHandler { viewerItems = null }
+        BackHandler { closeViewer() }
         val viewerList = viewerItems.orEmpty()
         if (viewerIndex in viewerList.indices) {
             ViewerScreen(
@@ -302,7 +326,7 @@ private fun MyPlayerApp() {
                 position = viewerIndex,
                 total = viewerList.size,
                 loader = loader,
-                onBack = { viewerItems = null },
+                onBack = { closeViewer() },
                 onDelete = { deleteConfirmation = viewerList[viewerIndex] },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
@@ -315,6 +339,10 @@ private fun MyPlayerApp() {
         GalleryScreen(
             allMedia = allMedia,
             visible = visible,
+            listState = galleryListState,
+            gridState = galleryGridState,
+            returnToMediaUri = pendingReturnUri,
+            onReturnPositionHandled = { pendingReturnUri = null },
             folders = folderRows,
             browserMode = browserMode,
             currentFolderKey = currentFolderKey,
@@ -349,6 +377,8 @@ private fun MyPlayerApp() {
             onRefresh = { refresh++ },
             onPermission = { permissionLauncher.launch(MediaLibrary.requestedPermissions()) },
             onOpen = { index ->
+                openedMediaUri = visible.getOrNull(index)?.uri?.toString()
+                pendingReturnUri = null
                 viewerItems = visible.toList()
                 viewerIndex = index
             },
@@ -396,6 +426,10 @@ private fun MyPlayerApp() {
 private fun GalleryScreen(
     allMedia: List<LocalMedia>,
     visible: List<LocalMedia>,
+    listState: LazyListState,
+    gridState: LazyGridState,
+    returnToMediaUri: String?,
+    onReturnPositionHandled: () -> Unit,
     folders: List<MediaFolder>,
     browserMode: BrowserMode,
     currentFolderKey: String?,
@@ -436,6 +470,29 @@ private fun GalleryScreen(
     val dateGroups = remember(visible, sort) {
         if (sort == MediaSort.CREATED) MediaLibrary.groupByCreatedDay(visible)
         else emptyList()
+    }
+    LaunchedEffect(returnToMediaUri, visible, folders, sort, listMode, loading) {
+        val targetUri = returnToMediaUri ?: return@LaunchedEffect
+        if (loading) return@LaunchedEffect
+        val mediaIndex = visible.indexOfFirst { it.uri.toString() == targetUri }
+        if (mediaIndex >= 0) {
+            val dayKeys = if (sort == MediaSort.CREATED) {
+                visible.map { MediaLibrary.createdDayKey(it.createdAtMs) }
+            } else {
+                List(visible.size) { "" }
+            }
+            val itemIndex = galleryLazyItemIndex(
+                mediaIndex = mediaIndex,
+                dayKeys = dayKeys,
+                folderRows = folders.size,
+                groupedByDay = sort == MediaSort.CREATED,
+            )
+            if (itemIndex >= 0) {
+                if (listMode) listState.scrollToItem(itemIndex)
+                else gridState.scrollToItem(itemIndex)
+            }
+        }
+        onReturnPositionHandled()
     }
     Column(
         modifier = Modifier
@@ -625,6 +682,7 @@ private fun GalleryScreen(
                 onClick = if (allMedia.isEmpty()) onPermission else onRefresh,
             )
             listMode -> LazyColumn(
+                state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -657,6 +715,7 @@ private fun GalleryScreen(
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
+                state = gridState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(15.dp),
