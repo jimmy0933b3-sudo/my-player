@@ -649,22 +649,22 @@ fun ViewerScreen(
                                     }
                                 }
                                 if (showPlayButton) {
-                                        IconButton(onClick = {
-                                            notifyInteraction()
-                                            if (playing) {
-                                                player?.pause()
-                                                playing = false
-                                            } else {
-                                                player?.play()
-                                                playing = true
-                                            }
-                                        }) {
-                                            Icon(
-                                                if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
-                                                if (playing) "暫停" else "播放",
-                                                tint = Color.White, modifier = Modifier.size(48.dp),
-                                            )
+                                    IconButton(onClick = {
+                                        notifyInteraction()
+                                        if (playing) {
+                                            player?.pause()
+                                            playing = false
+                                        } else {
+                                            player?.play()
+                                            playing = true
                                         }
+                                    }) {
+                                        Icon(
+                                            if (playing) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                                            if (playing) "暫停" else "播放",
+                                            tint = Color.White, modifier = Modifier.size(48.dp),
+                                        )
+                                    }
                                 }
                                 if (showPreviousNextButtons) {
                                     IconButton(
