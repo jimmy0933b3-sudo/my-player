@@ -144,14 +144,19 @@ private fun MyPlayerApp() {
             MediaFilter.valueOf(galleryPrefs.getString("filter", "ALL") ?: "ALL")
         }.getOrDefault(MediaFilter.ALL))
     }
-    var sort by remember {
-        mutableStateOf(runCatching {
-            MediaSort.valueOf(
-                galleryPrefs.getString("sort", MediaSort.MODIFIED.name)
-                    ?: MediaSort.MODIFIED.name,
-            )
-        }.getOrDefault(MediaSort.MODIFIED))
+    val initialSort = remember(galleryPrefs) {
+        val saved = galleryPrefs.getString("sort", null)
+        val version = galleryPrefs.getInt("sort_version", 0)
+        SortPreferenceMigration.migrate(saved, version).also { migrated ->
+            if (version < SortPreferenceMigration.VERSION) {
+                galleryPrefs.edit()
+                    .putString("sort", migrated.name)
+                    .putInt("sort_version", SortPreferenceMigration.VERSION)
+                    .apply()
+            }
+        }
     }
+    var sort by remember { mutableStateOf(initialSort) }
     var ascending by remember { mutableStateOf(galleryPrefs.getBoolean("ascending", false)) }
     var query by remember { mutableStateOf(galleryPrefs.getString("query", "").orEmpty()) }
     var searchExpanded by remember { mutableStateOf(query.isNotEmpty()) }
