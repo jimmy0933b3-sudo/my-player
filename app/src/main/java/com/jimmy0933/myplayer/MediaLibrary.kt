@@ -23,6 +23,8 @@ data class LocalMedia(
     val bytes: Long,
     val createdAtMs: Long,
     val durationMs: Long = 0L,
+    val folderPath: String = "",
+    val volumeName: String = "external_primary",
 )
 
 enum class MediaFilter { ALL, PHOTOS, VIDEOS }
@@ -105,6 +107,12 @@ object MediaLibrary {
             add(MediaStore.MediaColumns.SIZE)
             add(MediaStore.MediaColumns.DATE_ADDED)
             add(dateTaken)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaStore.MediaColumns.RELATIVE_PATH)
+                add(MediaStore.MediaColumns.VOLUME_NAME)
+            } else {
+                add(MediaStore.MediaColumns.DATA)
+            }
             if (video) add(MediaStore.Video.Media.DURATION)
         }.toTypedArray()
         val result = mutableListOf<LocalMedia>()
@@ -121,6 +129,12 @@ object MediaLibrary {
             val addedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
             val takenColumn = cursor.getColumnIndex(dateTaken)
             val durationColumn = if (video) cursor.getColumnIndex(MediaStore.Video.Media.DURATION) else -1
+            val folderColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
+            val volumeColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                cursor.getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME) else -1
+            val legacyPathColumn = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q)
+                cursor.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
                 val added = if (cursor.isNull(addedColumn)) 0L else cursor.getLong(addedColumn) * 1000
@@ -129,6 +143,16 @@ object MediaLibrary {
                 val size = if (cursor.isNull(sizeColumn)) 0L else cursor.getLong(sizeColumn)
                 val duration = if (durationColumn < 0 || cursor.isNull(durationColumn)) 0L
                                else cursor.getLong(durationColumn)
+                // Relative paths are exposed for authorized media without direct
+                // filesystem access. Older Android versions use the DATA parent.
+                val legacyPath = if (legacyPathColumn >= 0 &&
+                    !cursor.isNull(legacyPathColumn)) cursor.getString(legacyPathColumn) else null
+                val (legacyVolume, legacyFolder) = legacyLocation(legacyPath)
+                val folderPath = if (folderColumn >= 0 && !cursor.isNull(folderColumn))
+                    MediaFolders.normalizePath(cursor.getString(folderColumn)) else legacyFolder
+                val volumeName = if (volumeColumn >= 0 && !cursor.isNull(volumeColumn))
+                    cursor.getString(volumeColumn).orEmpty().ifBlank { "external_primary" }
+                    else legacyVolume
                 result += LocalMedia(
                     id = id,
                     uri = ContentUris.withAppendedId(base, id),
@@ -137,10 +161,31 @@ object MediaLibrary {
                     bytes = size,
                     createdAtMs = if (taken > 0) taken else added,
                     durationMs = duration,
+                    folderPath = folderPath,
+                    volumeName = volumeName,
                 )
             }
         }
         return result
+    }
+
+    private fun legacyLocation(path: String?): Pair<String, String> {
+        val parent = path?.replace('\\\\', '/')?.substringBeforeLast('/', "")
+            .orEmpty()
+        if (parent.startsWith("/storage/emulated/")) {
+            val relative = parent.removePrefix("/storage/emulated/")
+                .substringAfter('/', "")
+            return "external_primary" to MediaFolders.normalizePath(relative)
+        }
+        if (parent.startsWith("/storage/")) {
+            val storagePath = parent.removePrefix("/storage/")
+            val volume = storagePath.substringBefore('/')
+            return volume to MediaFolders.normalizePath(storagePath.substringAfter('/', ""))
+        }
+        if (parent.startsWith("/sdcard/")) {
+            return "external_primary" to MediaFolders.normalizePath(parent.removePrefix("/sdcard/"))
+        }
+        return "external_primary" to MediaFolders.normalizePath(parent)
     }
 
     fun sorted(
