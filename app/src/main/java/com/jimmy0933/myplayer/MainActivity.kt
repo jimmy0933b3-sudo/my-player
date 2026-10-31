@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -280,7 +281,8 @@ private fun MyPlayerApp() {
     // including pause, rotation and switches between neighboring media.
     // On returning to the gallery we always restore normal system bars.
     val isViewerOpen = viewerItems != null
-    DisposableEffect(activity, isViewerOpen) {
+    val viewerOrientation = LocalConfiguration.current.orientation
+    DisposableEffect(activity, isViewerOpen, viewerOrientation) {
         val insetsController = WindowCompat.getInsetsController(
             activity.window, activity.window.decorView,
         )
