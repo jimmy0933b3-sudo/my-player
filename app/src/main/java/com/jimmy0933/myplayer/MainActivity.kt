@@ -552,6 +552,16 @@ private fun GalleryScreen(
     returnToMediaUri: String?,
     onReturnPositionHandled: () -> Unit,
     folders: List<MediaFolder>,
+    selectionMode: Boolean,
+    selectedUris: Set<String>,
+    deleting: Boolean,
+    onLongSelect: (LocalMedia) -> Unit,
+    onToggleSelection: (LocalMedia) -> Unit,
+    onExitSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    canManageMedia: Boolean,
+    onMediaManagementInfo: () -> Unit,
     browserMode: BrowserMode,
     currentFolderKey: String?,
     favoriteFolders: Set<String>,
@@ -577,12 +587,20 @@ private fun GalleryScreen(
     onPermission: () -> Unit,
     onOpen: (Int) -> Unit,
 ) {
-    BackHandler(enabled = browserMode != BrowserMode.ALL) {
-        if (browserMode == BrowserMode.FOLDERS && currentFolderKey != null) {
+    BackHandler(enabled = selectionMode || browserMode != BrowserMode.ALL) {
+        if (selectionMode) onExitSelection()
+        else if (browserMode == BrowserMode.FOLDERS && currentFolderKey != null) {
             onFolderChange(MediaFolders.parentKey(currentFolderKey))
         } else {
             onBrowserModeChange(BrowserMode.ALL)
         }
+    }
+    fun tapItem(index: Int) {
+        val item = visible.getOrNull(index) ?: return
+        if (selectionMode) onToggleSelection(item) else onOpen(index)
+    }
+    fun longTapItem(index: Int) {
+        visible.getOrNull(index)?.let(onLongSelect)
     }
     val photoCount = remember(allMedia) { allMedia.count { !it.isVideo } }
     val videoCount = remember(allMedia) { allMedia.count { it.isVideo } }
@@ -646,6 +664,47 @@ private fun GalleryScreen(
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, "重新掃描", tint = Subtle)
+                }
+                if (Build.VERSION.SDK_INT >= 31) {
+                    IconButton(onClick = onMediaManagementInfo) {
+                        Icon(
+                            Icons.Default.AdminPanelSettings,
+                            "設定媒體管理權限",
+                            tint = if (canManageMedia) Mint else Subtle,
+                        )
+                    }
+                }
+            }
+            if (selectionMode) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth()
+                        .background(Panel, RoundedCornerShape(14.dp))
+                        .padding(start = 9.dp, end = 3.dp, top = 3.dp, bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "已選 " + selectedUris.size + " 個",
+                        modifier = Modifier.weight(1f),
+                        color = Mint,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(enabled = !deleting && visible.isNotEmpty(), onClick = onSelectAll) {
+                        Text("全選")
+                    }
+                    IconButton(enabled = !deleting, onClick = onExitSelection) {
+                        Icon(Icons.Default.Close, "取消多選", tint = Subtle)
+                    }
+                    Button(
+                        enabled = !deleting && selectedUris.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        onClick = onDeleteSelected,
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(if (deleting) "刪除中" else "刪除")
+                    }
                 }
             }
 
@@ -825,12 +884,22 @@ private fun GalleryScreen(
                             items = group.entries,
                             key = { "${it.value.isVideo}-${it.value.id}" },
                         ) { entry ->
-                            MediaListItem(entry.value, loader) { onOpen(entry.index) }
+                            MediaListItem(
+                                entry.value, loader,
+                                selected = entry.value.uri.toString() in selectedUris,
+                                onClick = { tapItem(entry.index) },
+                                onLongClick = { longTapItem(entry.index) },
+                            )
                         }
                     }
                 } else {
                     itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                        MediaListItem(item, loader) { onOpen(index) }
+                        MediaListItem(
+                            item, loader,
+                            selected = item.uri.toString() in selectedUris,
+                            onClick = { tapItem(index) },
+                            onLongClick = { longTapItem(index) },
+                        )
                     }
                 }
             }
@@ -863,12 +932,22 @@ private fun GalleryScreen(
                             items = group.entries,
                             key = { "${it.value.isVideo}-${it.value.id}" },
                         ) { entry ->
-                            MediaGridItem(entry.value, loader) { onOpen(entry.index) }
+                            MediaGridItem(
+                                entry.value, loader,
+                                selected = entry.value.uri.toString() in selectedUris,
+                                onClick = { tapItem(entry.index) },
+                                onLongClick = { longTapItem(entry.index) },
+                            )
                         }
                     }
                 } else {
                     itemsIndexed(visible, key = { _, m -> "${m.isVideo}-${m.id}" }) { index, item ->
-                        MediaGridItem(item, loader) { onOpen(index) }
+                        MediaGridItem(
+                            item, loader,
+                            selected = item.uri.toString() in selectedUris,
+                            onClick = { tapItem(index) },
+                            onLongClick = { longTapItem(index) },
+                        )
                     }
                 }
             }
@@ -1061,50 +1140,78 @@ private fun Thumb(media: LocalMedia, loader: ImageLoader, modifier: Modifier = M
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaGridItem(media: LocalMedia, loader: ImageLoader, onClick: () -> Unit) {
+private fun MediaGridItem(
+    media: LocalMedia,
+    loader: ImageLoader,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .background(Panel, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick),
+            .border(2.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(14.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
-        Thumb(
-            media, loader,
-            Modifier.fillMaxWidth().aspectRatio(1f),
-        )
+        Box {
+            Thumb(media, loader, Modifier.fillMaxWidth().aspectRatio(1f))
+            if (selected) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    "已選取",
+                    tint = Mint,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .background(Panel, CircleShape)
+                        .size(25.dp),
+                )
+            }
+        }
         Text(
-            media.name,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
+            media.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall, color = Color.White,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaListItem(media: LocalMedia, loader: ImageLoader, onClick: () -> Unit) {
+private fun MediaListItem(
+    media: LocalMedia,
+    loader: ImageLoader,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth()
-            .background(Panel, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .background(if (selected) Accent.copy(alpha = .2f) else Panel, RoundedCornerShape(14.dp))
+            .border(2.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(14.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Thumb(media, loader, Modifier.size(84.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(media.name, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Text(media.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(5.dp))
             Text(
-                "${dateLabel(media.createdAtMs)}  ·  ${MediaLibrary.readableSize(media.bytes)}",
-                color = Subtle,
-                style = MaterialTheme.typography.labelMedium,
+                dateLabel(media.createdAtMs) + " · " + MediaLibrary.readableSize(media.bytes),
+                color = Subtle, style = MaterialTheme.typography.labelMedium,
             )
-            Text(if (media.isVideo) "影片" else "圖片", color = Mint, style = MaterialTheme.typography.labelSmall)
+            Text(if (media.isVideo) "影片" else "圖片",
+                color = Mint, style = MaterialTheme.typography.labelSmall)
         }
-        Icon(Icons.Default.ChevronRight, null, tint = Subtle)
+        Icon(
+            if (selected) Icons.Default.CheckCircle else Icons.Default.ChevronRight,
+            if (selected) "已選取" else null,
+            tint = if (selected) Mint else Subtle,
+        )
     }
 }
 
