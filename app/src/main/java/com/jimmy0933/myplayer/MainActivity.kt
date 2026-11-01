@@ -6,6 +6,8 @@ import android.app.RecoverableSecurityException
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.Intent
+import android.content.ContentValues
+import android.content.ClipData
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -376,6 +378,13 @@ private fun MyPlayerApp() {
         openedMediaUri = null
     }
     var deleteConfirmation by remember { mutableStateOf<List<LocalMedia>?>(null) }
+    var fileBusy by remember { mutableStateOf(false) }
+    var fileMessage by remember { mutableStateOf<String?>(null) }
+    var fileActionPending by remember { mutableStateOf<Pair<MediaFileAction, List<LocalMedia>>?>(null) }
+    var copiedForMove by remember { mutableStateOf<List<LocalMedia>?>(null) }
+    var renameTarget by remember { mutableStateOf<LocalMedia?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var renameWaitingApproval by remember { mutableStateOf<Pair<LocalMedia, String>?>(null) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedUris by remember { mutableStateOf(emptySet<String>()) }
     var mediaManageInfo by remember { mutableStateOf(false) }
@@ -595,6 +604,156 @@ private fun MyPlayerApp() {
         }
     }
 
+    // Android's folder picker gives us explicit write access to the destination
+    // directory, including removable volumes where the user grants permission.
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        val pending = fileActionPending
+        fileActionPending = null
+        if (treeUri != null && pending != null) {
+            fileBusy = true
+            scope.launch {
+                try {
+                    val copied = MediaFileOperations.copyIntoFolder(
+                        context, pending.second, treeUri,
+                    )
+                    if (copied.copiedSources.isNotEmpty()) refresh++
+                    if (pending.first == MediaFileAction.MOVE &&
+                        copied.failures.isEmpty() &&
+                        copied.copiedSources.size == pending.second.distinctBy { it.uri }.size) {
+                        copiedForMove = copied.copiedSources
+                    } else {
+                        val label = if (pending.first == MediaFileAction.MOVE) {
+                            "來源檔未刪除，僅複製完成"
+                        } else "複製完成"
+                        fileMessage = "$label：${copied.copiedSources.size} 個成功、" +
+                            "${copied.failures.size} 個失敗。" +
+                            copied.failures.take(3).joinToString("\n", prefix = "\n")
+                    }
+                } catch (e: Exception) {
+                    fileMessage = "操作失敗：${e.message ?: "無法使用所選資料夾"}"
+                } finally {
+                    fileBusy = false
+                }
+            }
+        }
+    }
+
+    // Renaming an existing MediaStore item requires the user's approval when
+    // this app is not its owner. Confirm with the system before updating.
+    fun commitRename(media: LocalMedia, name: String) {
+        fileBusy = true
+        scope.launch {
+            try {
+                val changed = withContext(Dispatchers.IO) {
+                    context.contentResolver.update(
+                        media.uri,
+                        ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        },
+                        null, null,
+                    )
+                }
+                if (changed > 0) {
+                    fileMessage = "已重新命名為「$name」"
+                    refresh++
+                    if (viewerItems != null) {
+                        val index = viewerItems.orEmpty().indexOfFirst { it.uri == media.uri }
+                        if (index >= 0) viewerItems =
+                            viewerItems.orEmpty().toMutableList().also {
+                                it[index] = media.copy(name = name)
+                            }
+                    }
+                } else fileMessage = "重新命名未生效，檔案保持原狀。"
+            } catch (e: Exception) {
+                fileMessage = "重新命名失敗：${e.message ?: "沒有權限或檔案不存在"}"
+            } finally {
+                fileBusy = false
+            }
+        }
+    }
+
+    val renameWriteApproval = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val pending = renameWaitingApproval
+        renameWaitingApproval = null
+        if (result.resultCode == Activity.RESULT_OK && pending != null) {
+            commitRename(pending.first, pending.second)
+        } else {
+            fileMessage = "未授權修改，原始名稱保持不變。"
+        }
+    }
+
+    fun requestRename(media: LocalMedia, name: String) {
+        if (!isValidMediaFilename(name) || name.trim() == media.name) {
+            fileMessage = "請填入不同且有效的檔名，不可包含 / 或反斜線。"
+            return
+        }
+        renameWaitingApproval = media to name.trim()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val request = MediaStore.createWriteRequest(
+                    context.contentResolver, listOf(media.uri),
+                )
+                renameWriteApproval.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build(),
+                )
+            } catch (e: Exception) {
+                renameWaitingApproval = null
+                fileMessage = "無法要求修改權限：${e.message ?: "請檢查媒體授權"}"
+            }
+        } else {
+            renameWaitingApproval = null
+            // Android 10 may require its per-file RecoverableSecurityException.
+            // Attempt the update and let the Android framework report errors.
+            commitRename(media, name.trim())
+        }
+    }
+
+    fun shareFiles(items: List<LocalMedia>) {
+        if (items.isEmpty()) return
+        val list = ArrayList(items.distinctBy { it.uri }.map { it.uri })
+        val mime = if (items.all { it.isVideo }) "video/*"
+            else if (items.all { !it.isVideo }) "image/*" else "*/*"
+        val intent = Intent(
+            if (list.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE,
+        ).apply {
+            type = mime
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (list.size == 1) putExtra(Intent.EXTRA_STREAM, list.first())
+            else putParcelableArrayListExtra(Intent.EXTRA_STREAM, list)
+            clipData = ClipData.newUri(context.contentResolver, "分享媒體", list.first()).also {
+                for (uri in list.drop(1)) it.addItem(ClipData.Item(uri))
+            }
+        }
+        runCatching {
+            context.startActivity(Intent.createChooser(intent, "分享圖片或影片"))
+        }.onFailure { fileMessage = "無法分享：${it.message ?: "找不到分享 App"}" }
+    }
+
+    fun requestFileAction(action: MediaFileAction, targets: List<LocalMedia>) {
+        if (deleting || fileBusy) return
+        val unique = targets.distinctBy { it.uri.toString() }
+        if (unique.isEmpty()) return
+        when (action) {
+            MediaFileAction.COPY, MediaFileAction.MOVE -> {
+                fileActionPending = action to unique
+                folderPicker.launch(null)
+            }
+            MediaFileAction.SHARE -> shareFiles(unique)
+            MediaFileAction.RENAME -> {
+                if (unique.size != 1) {
+                    fileMessage = "請只選擇一個檔案再重新命名。"
+                } else {
+                    renameTarget = unique.first()
+                    renameText = unique.first().name
+                }
+            }
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { refresh++ }
@@ -683,6 +842,9 @@ private fun MyPlayerApp() {
                 decoderPreferences = decoderPreferences,
                 onBack = { closeViewer() },
                 onDelete = { requestDeletion(listOf(viewerList[viewerIndex])) },
+                onFileAction = { action ->
+                    requestFileAction(action, listOf(viewerList[viewerIndex]))
+                },
                 onChange = { direction ->
                     viewerIndex = (viewerIndex + direction).coerceIn(0, viewerList.lastIndex)
                 },
@@ -701,7 +863,7 @@ private fun MyPlayerApp() {
             folders = folderRows,
             selectionMode = selectionMode,
             selectedUris = selectedUris,
-            deleting = deleting,
+            deleting = deleting || fileBusy,
             onLongSelect = { media ->
                 if (!deleting) {
                     selectionMode = true
@@ -718,6 +880,9 @@ private fun MyPlayerApp() {
             onSelectAll = { selectedUris = visible.mapTo(mutableSetOf()) { it.uri.toString() } },
             onDeleteSelected = {
                 requestDeletion(visible.filter { it.uri.toString() in selectedUris })
+            },
+            onFileActionSelected = { action ->
+                requestFileAction(action, visible.filter { it.uri.toString() in selectedUris })
             },
             canManageMedia = canManageMedia,
             onMediaManagementInfo = { mediaManageInfo = true },
@@ -794,6 +959,63 @@ private fun MyPlayerApp() {
                 pendingReturnUri = null
                 viewerItems = visible.toList()
                 viewerIndex = index
+            },
+        )
+    }
+    copiedForMove?.let { copied ->
+        AlertDialog(
+            onDismissRequest = { copiedForMove = null },
+            title = { Text("副本已完成，是否刪除原檔？") },
+            text = {
+                Text(
+                    "已將 ${copied.size} 個檔案完整複製到目的地。確認後將透過 Android 授權刪除原始檔，完成移動。" +
+                        "取消時來源與副本都會保留。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    copiedForMove = null
+                    requestDeletion(copied)
+                }) { Text("刪除原檔，完成移動") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    copiedForMove = null
+                    fileMessage = "已保留原始檔與副本，未執行刪除。"
+                }) { Text("保留原檔") }
+            },
+        )
+    }
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重新命名") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("檔案名稱（含副檔名）") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    renameTarget = null
+                    requestRename(target, renameText)
+                }) { Text("確認修改") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text("取消") }
+            },
+        )
+    }
+    fileMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { fileMessage = null },
+            title = { Text("檔案處理結果") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { fileMessage = null }) { Text("知道了") }
             },
         )
     }
