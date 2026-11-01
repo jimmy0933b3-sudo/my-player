@@ -4,5 +4,5 @@ package com.jimmy0933.myplayer
 internal fun folderScrollScope(browserMode: String, folderKey: String?): String =
     if (browserMode == "FOLDERS") {
         val key = folderKey.orEmpty()
-        "folder_${key.length}_$key"
+        "folder_${folderKey?.length ?: -1}_$key"
     } else "browser_$browserMode"
