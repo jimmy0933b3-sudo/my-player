@@ -51,8 +51,10 @@ object MediaFileOperations {
                     throw IOException("寫入長度與來源大小不一致")
                 }
                 // Verify the destination's reported size when its provider supports it.
-                val outputSize = resolver.openFileDescriptor(destination, "r")
-                    ?.use { it.statSize } ?: -1L
+                val outputSize = runCatching {
+                    resolver.openFileDescriptor(destination, "r")
+                        ?.use { it.statSize } ?: -1L
+                }.getOrDefault(-1L)
                 if (outputSize >= 0 && transferred.toLong() != outputSize) {
                     throw IOException("目標檔案驗證失敗")
                 }
