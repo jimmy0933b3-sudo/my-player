@@ -640,6 +640,7 @@ private fun MyPlayerApp() {
         }
     }
 
+    lateinit var requestLegacyRenameApproval: (RecoverableSecurityException) -> Unit
     // Renaming an existing MediaStore item requires the user's approval when
     // this app is not its owner. Confirm with the system before updating.
     fun commitRename(media: LocalMedia, name: String) {
@@ -666,6 +667,13 @@ private fun MyPlayerApp() {
                             }
                     }
                 } else fileMessage = "重新命名未生效，檔案保持原狀。"
+            } catch (e: RecoverableSecurityException) {
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                    renameWaitingApproval = media to name
+                    requestLegacyRenameApproval(e)
+                } else {
+                    fileMessage = "重新命名失敗：${e.message ?: "沒有權限或檔案不存在"}"
+                }
             } catch (e: Exception) {
                 fileMessage = "重新命名失敗：${e.message ?: "沒有權限或檔案不存在"}"
             } finally {
@@ -686,6 +694,28 @@ private fun MyPlayerApp() {
         }
     }
 
+    requestLegacyRenameApproval = { exception ->
+        runCatching {
+            renameWriteApproval.launch(
+                IntentSenderRequest.Builder(
+                    exception.userAction.actionIntent.intentSender,
+                ).build(),
+            )
+        }.onFailure {
+            renameWaitingApproval = null
+            fileMessage = "Android 未能開啟修改授權：${it.message ?: "請檢查權限"}"
+        }
+    }
+
+    val legacyRenamePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val pending = renameWaitingApproval
+        renameWaitingApproval = null
+        if (granted && pending != null) commitRename(pending.first, pending.second)
+        else fileMessage = "未授予檔案修改權限，來源未更動。"
+    }
+
     fun requestRename(media: LocalMedia, name: String) {
         if (!isValidMediaFilename(name) || name.trim() == media.name) {
             fileMessage = "請填入不同且有效的檔名，不可包含 / 或反斜線。"
@@ -704,10 +734,15 @@ private fun MyPlayerApp() {
                 renameWaitingApproval = null
                 fileMessage = "無法要求修改權限：${e.message ?: "請檢查媒體授權"}"
             }
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED) {
+            legacyRenamePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
             renameWaitingApproval = null
-            // Android 10 may require its per-file RecoverableSecurityException.
-            // Attempt the update and let the Android framework report errors.
+            // Android 10 may require a per-file RecoverableSecurityException,
+            // which commitRename handles through the system approval dialog.
             commitRename(media, name.trim())
         }
     }
