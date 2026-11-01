@@ -55,6 +55,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -107,6 +108,7 @@ fun ViewerScreen(
     decoderPreferences: DecoderPreferences,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // A short directional cue accompanies each actual media index change.
@@ -325,7 +327,7 @@ fun ViewerScreen(
                     scaleX = zoom
                     scaleY = zoom
                     translationX = translation.x
-                    translationY = translation.y + with(this) {
+                    translationY = translation.y + with(density) {
                         photoEnterOffset.value.dp.toPx()
                     }
                 },
