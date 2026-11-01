@@ -86,6 +86,8 @@ fun ViewerScreen(
     showPlayButton: Boolean,
     showPreviousNextButtons: Boolean,
     volumeSettings: PlaybackVolumeSettings,
+    volumeBarTransparency: Float,
+    volumeBarThickness: Float,
     onVolumeChange: (Float) -> Unit,
     onToggleMute: () -> Unit,
     hasPreviousVideo: Boolean,
@@ -495,6 +497,8 @@ fun ViewerScreen(
         if (showControls && media.isVideo) {
             PlaybackVolumeControl(
                 settings = volumeSettings,
+                transparency = volumeBarTransparency,
+                thicknessDp = volumeBarThickness,
                 onVolumeChange = { notifyInteraction(); onVolumeChange(it) },
                 onToggleMute = { notifyInteraction(); onToggleMute() },
                 modifier = Modifier.align(Alignment.CenterEnd)
@@ -745,6 +749,8 @@ fun ViewerScreen(
 @Composable
 private fun PlaybackVolumeControl(
     settings: PlaybackVolumeSettings,
+    transparency: Float,
+    thicknessDp: Float,
     onVolumeChange: (Float) -> Unit,
     onToggleMute: () -> Unit,
     modifier: Modifier = Modifier,
@@ -754,6 +760,7 @@ private fun PlaybackVolumeControl(
     val muted = volume <= 0f
     Column(
         modifier = modifier
+            .graphicsLayer { alpha = VolumeBarStyle.alpha(transparency) }
             .background(Color.Black.copy(alpha = .60f), RoundedCornerShape(20.dp))
             .padding(horizontal = 4.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -766,6 +773,7 @@ private fun PlaybackVolumeControl(
         )
         VerticalVolumeSlider(
             value = volume,
+            thicknessDp = thicknessDp,
             onValueChange = onVolumeChange,
             modifier = Modifier.width(44.dp).height(sliderHeight),
         )
@@ -791,6 +799,7 @@ private fun PlaybackVolumeControl(
 @Composable
 private fun VerticalVolumeSlider(
     value: Float,
+    thicknessDp: Float,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -835,6 +844,7 @@ private fun VerticalVolumeSlider(
             },
     ) {
         val inset = 12.dp.toPx()
+        val trackWidth = VolumeBarStyle.trackDp(thicknessDp).dp.toPx()
         val x = size.width / 2f
         val top = inset
         val bottom = (size.height - inset).coerceAtLeast(top)
@@ -843,19 +853,19 @@ private fun VerticalVolumeSlider(
             color = Color.White.copy(alpha = 0.28f),
             start = Offset(x, top),
             end = Offset(x, bottom),
-            strokeWidth = 5.dp.toPx(),
+            strokeWidth = trackWidth,
             cap = StrokeCap.Round,
         )
         drawLine(
             color = Color(0xFF92A9FF),
             start = Offset(x, thumbY),
             end = Offset(x, bottom),
-            strokeWidth = 5.dp.toPx(),
+            strokeWidth = trackWidth,
             cap = StrokeCap.Round,
         )
         drawCircle(
             color = Color.White,
-            radius = 8.dp.toPx(),
+            radius = VolumeBarStyle.thumbRadiusDp(thicknessDp).dp.toPx(),
             center = Offset(x, thumbY),
         )
     }

@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -219,6 +220,30 @@ private fun MyPlayerApp() {
             .putFloat("video_volume", updated.level)
             .putBoolean("video_muted", updated.muted)
             .apply()
+    }
+    var volumeBarTransparency by remember {
+        mutableFloatStateOf(
+            VolumeBarStyle.transparency(
+                playbackPrefs.getFloat(
+                    "volume_bar_transparency", VolumeBarStyle.DEFAULT_TRANSPARENCY,
+                ),
+            ),
+        )
+    }
+    var volumeBarThickness by remember {
+        mutableFloatStateOf(
+            VolumeBarStyle.trackDp(
+                playbackPrefs.getFloat("volume_bar_thickness", VolumeBarStyle.DEFAULT_TRACK_DP),
+            ),
+        )
+    }
+    fun updateVolumeBarTransparency(value: Float) {
+        volumeBarTransparency = VolumeBarStyle.transparency(value)
+        playbackPrefs.edit().putFloat("volume_bar_transparency", volumeBarTransparency).apply()
+    }
+    fun updateVolumeBarThickness(value: Float) {
+        volumeBarThickness = VolumeBarStyle.trackDp(value)
+        playbackPrefs.edit().putFloat("volume_bar_thickness", volumeBarThickness).apply()
     }
     val galleryPrefs = remember(context) {
         context.getSharedPreferences("my_player_gallery_position", android.content.Context.MODE_PRIVATE)
@@ -600,6 +625,8 @@ private fun MyPlayerApp() {
                 showPlayButton = showPlayButton,
                 showPreviousNextButtons = showPreviousNextButtons,
                 volumeSettings = playbackVolume,
+                volumeBarTransparency = volumeBarTransparency,
+                volumeBarThickness = volumeBarThickness,
                 onVolumeChange = { savePlaybackVolume(playbackVolume.withSlider(it)) },
                 onToggleMute = { savePlaybackVolume(playbackVolume.toggleMute()) },
                 hasPreviousVideo = previousVideoIndex != null,
@@ -872,6 +899,78 @@ private fun MyPlayerApp() {
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
                     Text(
+                        "右側音量條外觀",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "音量條透明度：${(volumeBarTransparency * 100).roundToInt()}%",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = volumeBarTransparency,
+                        onValueChange = ::updateVolumeBarTransparency,
+                        valueRange = 0f..VolumeBarStyle.MAX_TRANSPARENCY,
+                    )
+                    Text(
+                        "音量條粗細：${volumeBarThickness.roundToInt()} dp",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = volumeBarThickness,
+                        onValueChange = ::updateVolumeBarThickness,
+                        valueRange = VolumeBarStyle.MIN_TRACK_DP..VolumeBarStyle.MAX_TRACK_DP,
+                        steps = (VolumeBarStyle.MAX_TRACK_DP - VolumeBarStyle.MIN_TRACK_DP).toInt() - 1,
+                    )
+                    Text(
+                        "預覽：透明度會套用至整個右側音量控制，包括背景、音量數值與靜音鍵；粗細僅調整音量軌道與滑動圓點。",
+                        color = Subtle,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                            .background(Panel, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .graphicsLayer { alpha = VolumeBarStyle.alpha(volumeBarTransparency) }
+                                .background(Color.Black.copy(alpha = .60f), RoundedCornerShape(20.dp))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                "50%",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Box(
+                                modifier = Modifier.width(44.dp).height(64.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    Modifier.width(volumeBarThickness.dp).height(56.dp)
+                                        .background(Color.White.copy(alpha = .28f), CircleShape),
+                                )
+                                Box(
+                                    Modifier.align(Alignment.BottomCenter)
+                                        .padding(bottom = 4.dp)
+                                        .width(volumeBarThickness.dp).height(28.dp)
+                                        .background(Accent, CircleShape),
+                                )
+                                Box(
+                                    Modifier.size(
+                                        (VolumeBarStyle.thumbRadiusDp(volumeBarThickness) * 2f).dp,
+                                    ).background(Color.White, CircleShape),
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
                         "橫向影片顯示",
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White,
@@ -955,6 +1054,8 @@ private fun MyPlayerApp() {
                         updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
                         updatePlayButtonVisibility(false)
                         updatePreviousNextVisibility(false)
+                        updateVolumeBarTransparency(VolumeBarStyle.DEFAULT_TRANSPARENCY)
+                        updateVolumeBarThickness(VolumeBarStyle.DEFAULT_TRACK_DP)
                     }) {
                         Text("恢復預設")
                     }
