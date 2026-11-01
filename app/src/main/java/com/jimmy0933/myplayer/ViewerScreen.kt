@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -79,6 +80,7 @@ fun ViewerScreen(
     loader: ImageLoader,
     onBack: () -> Unit,
     onDelete: () -> Unit,
+    onFileAction: (MediaFileAction) -> Unit,
     onChange: (Int) -> Unit,
     progressBarScale: Float,
     progressBarWidth: Float,
@@ -99,6 +101,7 @@ fun ViewerScreen(
 ) {
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var fileActionsExpanded by remember(media.uri) { mutableStateOf(false) }
     // Recover from an actual decoding error once, using installed software
     // decoders first. Preserve the playhead; never repeatedly restart a file.
     var softwareRetryAttempted by remember(media.uri) { mutableStateOf(false) }
@@ -543,6 +546,35 @@ fun ViewerScreen(
                         translation = Offset.Zero
                     }) {
                         Icon(Icons.Default.ZoomOutMap, "重設縮放", tint = Color.White)
+                    }
+                }
+                Box {
+                    IconButton(onClick = { notifyInteraction(); fileActionsExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, "檔案操作", tint = Color.White)
+                    }
+                    DropdownMenu(
+                        expanded = fileActionsExpanded,
+                        onDismissRequest = { fileActionsExpanded = false },
+                    ) {
+                        listOf(
+                            MediaFileAction.COPY to "複製到資料夾",
+                            MediaFileAction.MOVE to "移動到資料夾",
+                            MediaFileAction.RENAME to "重新命名",
+                            MediaFileAction.SHARE to "分享檔案",
+                        ).forEach { (action, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    fileActionsExpanded = false
+                                    notifyInteraction()
+                                    if (action == MediaFileAction.MOVE || action == MediaFileAction.RENAME) {
+                                        player?.pause()
+                                        playing = false
+                                    }
+                                    onFileAction(action)
+                                },
+                            )
+                        }
                     }
                 }
                 IconButton(onClick = {
