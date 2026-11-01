@@ -195,6 +195,15 @@ private fun MyPlayerApp() {
         controlsAutoHideSeconds = PlaybackControlsTimeout.normalize(newValue)
         playbackPrefs.edit().putInt("controls_auto_hide_seconds", controlsAutoHideSeconds).apply()
     }
+    var videoEndMode by remember {
+        mutableStateOf(
+            VideoEndMode.fromSaved(playbackPrefs.getString("video_end_mode", null)),
+        )
+    }
+    fun updateVideoEndMode(value: VideoEndMode) {
+        videoEndMode = value
+        playbackPrefs.edit().putString("video_end_mode", value.name).apply()
+    }
     // Migrate the previous default-visible play/pause setting once. Existing
     // installations need to hide the button too, not just fresh installs.
     // After migration, explicitly enabling it in Settings remains persistent.
@@ -851,9 +860,8 @@ private fun MyPlayerApp() {
             val previousVideoIndex = if (showPreviousNextButtons) {
                 adjacentVideoIndex(videoFlags, viewerIndex, -1)
             } else null
-            val nextVideoIndex = if (showPreviousNextButtons) {
-                adjacentVideoIndex(videoFlags, viewerIndex, 1)
-            } else null
+            val autoNextVideoIndex = nextVideoAtEnd(videoFlags, viewerIndex)
+            val nextVideoIndex = if (showPreviousNextButtons) autoNextVideoIndex else null
             ViewerScreen(
                 media = viewerList[viewerIndex],
                 position = viewerIndex,
@@ -862,6 +870,12 @@ private fun MyPlayerApp() {
                 progressBarScale = progressBarScale,
                 progressBarWidth = progressBarWidth,
                 controlsAutoHideSeconds = controlsAutoHideSeconds,
+                videoEndMode = videoEndMode,
+                onVideoCompleted = {
+                    // Video end should never depend on whether previous/next
+                    // buttons happen to be visible in the playback UI.
+                    autoNextVideoIndex?.let { viewerIndex = it }
+                },
                 showPlayButton = showPlayButton,
                 showPreviousNextButtons = showPreviousNextButtons,
                 volumeSettings = playbackVolume,
@@ -1220,6 +1234,36 @@ private fun MyPlayerApp() {
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
                     Text(
+                        "影片播放結束後",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(
+                            VideoEndMode.NEXT to "播下一部",
+                            VideoEndMode.REPEAT to "重頭播放",
+                            VideoEndMode.STOP to "停止",
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = videoEndMode == mode,
+                                onClick = { updateVideoEndMode(mode) },
+                                label = { Text(label, maxLines = 1) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    Text(
+                        "「播下一部」會依目前清單順序尋找下一部影片，跳過照片；到最後一部就停止。" +
+                            "「重頭播放」持續重播目前影片；「停止」停在影片結尾。預設為停止。",
+                        color = Subtle,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
                         "右側音量條外觀",
                         color = Color.White,
                         style = MaterialTheme.typography.titleSmall,
@@ -1372,6 +1416,7 @@ private fun MyPlayerApp() {
                         updateProgressScale(PlaybackProgressStyle.DEFAULT_SCALE)
                         updateProgressWidth(PlaybackProgressStyle.DEFAULT_WIDTH)
                         updateControlsAutoHideSeconds(PlaybackControlsTimeout.DEFAULT_SECONDS)
+                        updateVideoEndMode(VideoEndMode.STOP)
                         updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
                         updatePlayButtonVisibility(false)
                         updatePreviousNextVisibility(false)
