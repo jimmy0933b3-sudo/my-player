@@ -125,6 +125,20 @@ private fun MyPlayerApp() {
     }
     var playbackSettingsOpen by remember { mutableStateOf(false) }
     var decoderSettingsOpen by remember { mutableStateOf(false) }
+    // The system's Home / Back / Recents or gesture navigation indicator is
+    // independent of the app's own previous/next and play/pause controls.
+    var hideSystemNavigationBarDuringVideo by remember {
+        mutableStateOf(
+            playbackPrefs.getBoolean(
+                "hide_system_navigation_bar_during_video",
+                PlaybackSystemNavigation.DEFAULT_HIDE_WHILE_PLAYING,
+            ),
+        )
+    }
+    fun updateSystemNavigationBarVisibility(hide: Boolean) {
+        hideSystemNavigationBarDuringVideo = hide
+        playbackPrefs.edit().putBoolean("hide_system_navigation_bar_during_video", hide).apply()
+    }
     var decoderPreferences by remember(context) {
         mutableStateOf(DecoderSettings.load(context))
     }
@@ -370,27 +384,39 @@ private fun MyPlayerApp() {
         }
     }
 
-    // A full-screen Compose Box alone is not immersive: Android's clock,
-    // status icons and navigation gesture bar remain visible unless their
-    // window insets are explicitly hidden. Keep this scoped to the viewer,
-    // including pause, rotation and switches between neighboring media.
-    // On returning to the gallery we always restore normal system bars.
+    // The status bar always stays hidden in the viewer. Allow the user to
+    // independently show Android's own Back/Home/Recents navigation bar during
+    // video playback, without changing the photo viewer or gallery defaults.
+    // Re-evaluate when switching between videos and photos, or on rotation.
     val isViewerOpen = viewerItems != null
+    val isVideoViewerOpen = viewerItems?.getOrNull(viewerIndex)?.isVideo == true
     val viewerOrientation = LocalConfiguration.current.orientation
-    DisposableEffect(activity, isViewerOpen, viewerOrientation) {
+    DisposableEffect(
+        activity, isViewerOpen, isVideoViewerOpen,
+        hideSystemNavigationBarDuringVideo, viewerOrientation,
+    ) {
         val insetsController = WindowCompat.getInsetsController(
             activity.window, activity.window.decorView,
         )
-        val systemBars = WindowInsetsCompat.Type.systemBars()
-        if (isViewerOpen) {
+        val statusBars = WindowInsetsCompat.Type.statusBars()
+        val navigationBars = WindowInsetsCompat.Type.navigationBars()
+        if (PlaybackSystemNavigation.hideStatusBar(isViewerOpen)) {
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            insetsController.hide(systemBars)
+            insetsController.hide(statusBars)
+            if (PlaybackSystemNavigation.hideNavigationBar(
+                    isViewerOpen, isVideoViewerOpen, hideSystemNavigationBarDuringVideo,
+                )) {
+                insetsController.hide(navigationBars)
+            } else {
+                insetsController.show(navigationBars)
+            }
         } else {
-            insetsController.show(systemBars)
+            insetsController.show(statusBars or navigationBars)
         }
         onDispose {
-            if (isViewerOpen) insetsController.show(systemBars)
+            // A previous viewer effect must not leave the gallery immersive.
+            if (isViewerOpen) insetsController.show(statusBars or navigationBars)
         }
     }
 
@@ -859,6 +885,32 @@ private fun MyPlayerApp() {
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
                     Text(
+                        "系統導覽列",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "播放影片時隱藏底部系統導覽列",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Switch(
+                            checked = hideSystemNavigationBarDuringVideo,
+                            onCheckedChange = ::updateSystemNavigationBarVisibility,
+                        )
+                    }
+                    Text(
+                        "開啟時隱藏手機底部的返回／首頁／最近使用鍵或手勢提示列，進度條可使用更多畫面；關閉則保留系統導覽列。切換影片、橫直向與暫停時皆適用。",
+                        color = Subtle,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    HorizontalDivider()
+                    Spacer(Modifier.height(6.dp))
+                    Text(
                         "影片播放按鈕",
                         color = Color.White,
                         style = MaterialTheme.typography.titleSmall,
@@ -1054,6 +1106,7 @@ private fun MyPlayerApp() {
                         updateLandscapeDisplayMode(LandscapeVideoDisplay.SMART)
                         updatePlayButtonVisibility(false)
                         updatePreviousNextVisibility(false)
+                        updateSystemNavigationBarVisibility(PlaybackSystemNavigation.DEFAULT_HIDE_WHILE_PLAYING)
                         updateVolumeBarTransparency(VolumeBarStyle.DEFAULT_TRANSPARENCY)
                         updateVolumeBarThickness(VolumeBarStyle.DEFAULT_TRACK_DP)
                     }) {
