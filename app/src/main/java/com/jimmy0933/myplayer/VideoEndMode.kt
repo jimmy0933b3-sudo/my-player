@@ -6,7 +6,7 @@ package com.jimmy0933.myplayer
  * STOP preserves the player's original behavior. NEXT skips images and
  * stops at the end of the list. REPEAT loops the current video.
  */
-internal enum class VideoEndMode {
+enum class VideoEndMode {
     NEXT,
     REPEAT,
     STOP;
