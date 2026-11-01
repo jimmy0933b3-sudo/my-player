@@ -305,21 +305,41 @@ private fun MyPlayerApp() {
     }
     var viewerItems by remember { mutableStateOf<List<LocalMedia>?>(null) }
     var viewerIndex by remember { mutableIntStateOf(0) }
-    // Retain the gallery viewport even while the fullscreen viewer is displayed.
-    val galleryListState = rememberLazyListState(
-        initialFirstVisibleItemIndex = galleryPrefs.getInt("list_index", 0).coerceAtLeast(0),
-        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("list_offset", 0).coerceAtLeast(0),
-    )
-    val galleryGridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = galleryPrefs.getInt("grid_index", 0).coerceAtLeast(0),
-        initialFirstVisibleItemScrollOffset = galleryPrefs.getInt("grid_offset", 0).coerceAtLeast(0),
-    )
+    // Each folder owns its own durable LazyListState and LazyGridState.
+    // Switching folders recreates scroll state from that folder's bookmark.
+    // Keeping distinct states also avoids one folder's delayed scroll update
+    // overwriting the next folder's saved position.
+    val scrollScope = folderScrollScope(browserMode.name, currentFolderKey)
+    val galleryListState = remember(scrollScope) {
+        androidx.compose.foundation.lazy.LazyListState(
+            firstVisibleItemIndex = galleryPrefs.getInt(
+                "${scrollScope}_list_index",
+                if (browserMode == BrowserMode.ALL) galleryPrefs.getInt("list_index", 0) else 0,
+            ).coerceAtLeast(0),
+            firstVisibleItemScrollOffset = galleryPrefs.getInt(
+                "${scrollScope}_list_offset",
+                if (browserMode == BrowserMode.ALL) galleryPrefs.getInt("list_offset", 0) else 0,
+            ).coerceAtLeast(0),
+        )
+    }
+    val galleryGridState = remember(scrollScope) {
+        androidx.compose.foundation.lazy.grid.LazyGridState(
+            firstVisibleItemIndex = galleryPrefs.getInt(
+                "${scrollScope}_grid_index",
+                if (browserMode == BrowserMode.ALL) galleryPrefs.getInt("grid_index", 0) else 0,
+            ).coerceAtLeast(0),
+            firstVisibleItemScrollOffset = galleryPrefs.getInt(
+                "${scrollScope}_grid_offset",
+                if (browserMode == BrowserMode.ALL) galleryPrefs.getInt("grid_offset", 0) else 0,
+            ).coerceAtLeast(0),
+        )
+    }
     fun saveScroll() {
         galleryPrefs.edit()
-            .putInt("list_index", galleryListState.firstVisibleItemIndex)
-            .putInt("list_offset", galleryListState.firstVisibleItemScrollOffset)
-            .putInt("grid_index", galleryGridState.firstVisibleItemIndex)
-            .putInt("grid_offset", galleryGridState.firstVisibleItemScrollOffset)
+            .putInt("${scrollScope}_list_index", galleryListState.firstVisibleItemIndex)
+            .putInt("${scrollScope}_list_offset", galleryListState.firstVisibleItemScrollOffset)
+            .putInt("${scrollScope}_grid_index", galleryGridState.firstVisibleItemIndex)
+            .putInt("${scrollScope}_grid_offset", galleryGridState.firstVisibleItemScrollOffset)
             .apply()
     }
     fun saveBrowser() {
@@ -710,10 +730,6 @@ private fun MyPlayerApp() {
                     saveScroll()
                     browserMode = selected
                     currentFolderKey = null
-                    scope.launch {
-                        galleryListState.scrollToItem(0)
-                        galleryGridState.scrollToItem(0)
-                    }
                 }
             },
             onFolderChange = { key ->
@@ -721,10 +737,6 @@ private fun MyPlayerApp() {
                     saveScroll()
                     browserMode = BrowserMode.FOLDERS
                     currentFolderKey = key
-                    scope.launch {
-                        galleryListState.scrollToItem(0)
-                        galleryGridState.scrollToItem(0)
-                    }
                 }
             },
             onToggleFavorite = ::toggleFavorite,
