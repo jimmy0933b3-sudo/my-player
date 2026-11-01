@@ -1422,6 +1422,7 @@ private fun GalleryScreen(
     onExitSelection: () -> Unit,
     onSelectAll: () -> Unit,
     onDeleteSelected: () -> Unit,
+    onFileActionSelected: (MediaFileAction) -> Unit,
     canManageMedia: Boolean,
     onMediaManagementInfo: () -> Unit,
     onPlaybackSettings: () -> Unit,
@@ -1499,6 +1500,7 @@ private fun GalleryScreen(
     }
     var detailsExpanded by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
+    var fileMenuExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1625,6 +1627,39 @@ private fun GalleryScreen(
                         modifier = Modifier.size(34.dp),
                     ) {
                         Icon(Icons.Default.Close, "取消多選", tint = Subtle)
+                    }
+                    Box {
+                        TextButton(
+                            enabled = !deleting && selectedUris.isNotEmpty(),
+                            onClick = { fileMenuExpanded = true },
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert, "更多檔案操作",
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text("檔案")
+                        }
+                        DropdownMenu(
+                            expanded = fileMenuExpanded,
+                            onDismissRequest = { fileMenuExpanded = false },
+                        ) {
+                            listOf(
+                                MediaFileAction.COPY to "複製到資料夾",
+                                MediaFileAction.MOVE to "移動到資料夾",
+                                MediaFileAction.RENAME to "重新命名",
+                                MediaFileAction.SHARE to "分享檔案",
+                            ).forEach { (action, title) ->
+                                DropdownMenuItem(
+                                    text = { Text(title) },
+                                    enabled = action != MediaFileAction.RENAME ||
+                                        selectedUris.size == 1,
+                                    onClick = {
+                                        fileMenuExpanded = false
+                                        onFileActionSelected(action)
+                                    },
+                                )
+                            }
+                        }
                     }
                     TextButton(
                         enabled = !deleting && selectedUris.isNotEmpty(),
