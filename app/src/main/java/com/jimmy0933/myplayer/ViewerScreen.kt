@@ -8,6 +8,13 @@ package com.jimmy0933.myplayer
 import android.content.res.Configuration
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
@@ -48,6 +55,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -100,7 +108,38 @@ fun ViewerScreen(
     decoderPreferences: DecoderPreferences,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // A short directional cue accompanies each actual media index change.
+    // Keep the state across ViewerScreen recompositions, and do not animate
+    // initial open, progress seeking, pause/play or other unchanged media.
+    var previouslyShownIndex by remember { mutableIntStateOf(position) }
+    val switchDirection = remember(media.uri) {
+        MediaSwitchAnimation.direction(previouslyShownIndex, position)
+    }
+    SideEffect { previouslyShownIndex = position }
+    val photoEnterOffset = remember(media.uri) {
+        Animatable(MediaSwitchAnimation.enteringOffsetDp(switchDirection))
+    }
+    var showSwitchCue by remember(media.uri) { mutableStateOf(switchDirection != 0) }
+    LaunchedEffect(media.uri) {
+        if (switchDirection != 0) {
+            // No SurfaceView animation: animating an ExoPlayer SurfaceView
+            // can flicker or briefly show a black/gray frame on some devices.
+            if (!media.isVideo) {
+                photoEnterOffset.animateTo(
+                    0f, animationSpec = tween(
+                        MediaSwitchAnimation.DURATION_MS,
+                        easing = FastOutSlowInEasing,
+                    ),
+                )
+            }
+            delay(MediaSwitchAnimation.HINT_VISIBLE_MS)
+            showSwitchCue = false
+        }
+    }
+
     var fileActionsExpanded by remember(media.uri) { mutableStateOf(false) }
     // Recover from an actual decoding error once, using installed software
     // decoders first. Preserve the playhead; never repeatedly restart a file.
@@ -288,8 +327,31 @@ fun ViewerScreen(
                     scaleX = zoom
                     scaleY = zoom
                     translationX = translation.x
-                    translationY = translation.y
+                    translationY = translation.y + with(density) {
+                        photoEnterOffset.value.dp.toPx()
+                    }
                 },
+            )
+        }
+
+        // A small motion cue indicates previous/next without dimming videos.
+        AnimatedVisibility(
+            visible = showSwitchCue,
+            modifier = Modifier.align(Alignment.Center).offset(y = (-76).dp),
+            enter = fadeIn(tween(90)) + slideInVertically(
+                animationSpec = tween(140),
+                initialOffsetY = { if (switchDirection > 0) it / 3 else -it / 3 },
+            ),
+            exit = fadeOut(tween(120)),
+        ) {
+            Text(
+                MediaSwitchAnimation.indicatorText(switchDirection),
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = .52f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
             )
         }
 
