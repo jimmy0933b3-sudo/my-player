@@ -93,6 +93,8 @@ fun ViewerScreen(
     progressBarScale: Float,
     progressBarWidth: Float,
     controlsAutoHideSeconds: Int,
+    videoEndMode: VideoEndMode,
+    onVideoCompleted: () -> Unit,
     showPlayButton: Boolean,
     showPreviousNextButtons: Boolean,
     volumeSettings: PlaybackVolumeSettings,
@@ -174,10 +176,32 @@ fun ViewerScreen(
     LaunchedEffect(player, volumeSettings.effectiveVolume) {
         player?.volume = volumeSettings.effectiveVolume
     }
+    // REPEAT is handled by Media3 at the player level: a loop never enters
+    // STATE_ENDED and avoids flicker / reinitializing the video decoder.
+    LaunchedEffect(player, videoEndMode) {
+        player?.repeatMode = if (videoEndMode == VideoEndMode.REPEAT) {
+            Player.REPEAT_MODE_ONE
+        } else {
+            Player.REPEAT_MODE_OFF
+        }
+    }
+    // The listener lives for the ExoPlayer lifetime. These updated-state
+    // wrappers keep its completion logic current after Settings changes.
+    val latestVideoEndMode by rememberUpdatedState(videoEndMode)
+    val latestOnVideoCompleted by rememberUpdatedState(onVideoCompleted)
     DisposableEffect(player, media.uri) {
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 currentVideoSize = videoSize
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED &&
+                    latestVideoEndMode == VideoEndMode.NEXT) {
+                    latestOnVideoCompleted()
+                }
+                // STOP: leave the playhead at the end; REPEAT is handled by
+                // Media3 repeatMode and never needs an explicit seek callback.
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -212,6 +236,11 @@ fun ViewerScreen(
             }
         }
         player?.apply {
+            repeatMode = if (videoEndMode == VideoEndMode.REPEAT) {
+                Player.REPEAT_MODE_ONE
+            } else {
+                Player.REPEAT_MODE_OFF
+            }
             addListener(listener)
             addAnalyticsListener(analytics)
             setMediaItem(MediaItem.fromUri(media.uri))
